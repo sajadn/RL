@@ -23,6 +23,10 @@ policy:
       # Piecewise CUDA graph currently crashes with "illegal memory access"
       # (likely torch 2.10 + sglang incompatibility). Keep disabled until upstream fix.
       disable_piecewise_cuda_graph: true
+      # Diffusion LLM serving. Set dllm_algorithm to "FastDiffuser" or "LinearSpec"
+      # and dllm_algorithm_config to the corresponding SGLang DLLM YAML path.
+      dllm_algorithm: null
+      dllm_algorithm_config: null
 
 logger:
   wandb_enabled: true

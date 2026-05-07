@@ -93,6 +93,11 @@ class SglangSpecificArgs(TypedDict):
     enable_fast_load: NotRequired[bool]
     # Server warmup
     skip_server_warmup: NotRequired[bool]
+    # Diffusion LLM serving. `dllm_algorithm` maps to SGLang's ServerArgs
+    # value, e.g. "FastDiffuser" or "LinearSpec". `dllm_algorithm_config`
+    # is a path to the SGLang YAML file that configures the algorithm.
+    dllm_algorithm: NotRequired[str | None]
+    dllm_algorithm_config: NotRequired[str | None]
 
 
 class SGLangConfig(GenerationConfig):

@@ -1,0 +1,48 @@
+# GRPO on the Nemotron-Diffusion Ministral-3B Instruct AR checkpoint.
+#
+# This uses SGLang for rollout generation and Megatron for policy
+# training/logprob computation.
+#
+# Run with:
+#   python examples/run_grpo.py --config examples/configs/grpo_math_nemotron_diffusion_3b_instruct_ar_megatron_sglang.yaml
+defaults: "grpo_math_nemotron_diffusion_3b_ar_megatron.yaml"
+
+checkpointing:
+  checkpoint_dir: "results/grpo-nemotron-diffusion-3b-instruct-ar-megatron-sglang"
+
+policy:
+  model_name: "/lustre/fsw/portfolios/coreai/users/snorouzi/checkpoints/Nemotron-Diffusion-Exp-Ministral-3B-Instruct-vllm-ar"
+  tokenizer:
+    name: ${policy.model_name}
+
+  generation:
+    backend: "sglang"
+    max_new_tokens: 1024
+    temperature: 1.0
+    top_p: 1.0
+    top_k: null
+    stop_token_ids: null
+    stop_strings: null
+    sglang_cfg:
+      model_path: ${policy.model_name}
+      gpus_per_server: 1
+      dtype: ${policy.precision}
+      context_length: ${policy.max_total_sequence_length}
+      allow_auto_truncate: true
+      enable_memory_saver: false
+      dp_size: 1
+      pp_size: 1
+      ep_size: 1
+      max_running_requests: 32
+      mem_fraction_static: 0.7
+      skip_server_warmup: true
+      disable_piecewise_cuda_graph: true
+      attention_backend: "flashinfer"
+
+logger:
+  log_dir: "logs/grpo-nemotron-diffusion-3b-instruct-ar-megatron-sglang"
+  wandb_enabled: false
+  tensorboard_enabled: true
+  wandb:
+    project: "diffusion_rl"
+    name: "grpo-nemotron-diffusion-3b-instruct-ar-megatron-sglang"

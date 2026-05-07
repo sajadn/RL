@@ -39,6 +39,28 @@ from nemo_rl.utils.nsys import wrap_with_nvtx_name
 logger = logging.getLogger(__name__)
 
 
+def _extract_generated_tokens_and_logprobs(
+    result: dict[str, Any],
+) -> tuple[list[int], list[float]]:
+    """Extract generated token IDs and logprobs from an SGLang /generate response."""
+    meta_info = result.get("meta_info", {})
+    output_token_logprobs = meta_info.get("output_token_logprobs", [])
+
+    if output_token_logprobs:
+        new_tokens = [item[1] for item in output_token_logprobs]
+        new_logprobs = [item[0] for item in output_token_logprobs]
+        return new_tokens, new_logprobs
+
+    # SGLang DLLM generation can return output_ids without output_token_logprobs.
+    # Keep the sampled sequence and let policy logprob inference recompute old-policy
+    # logprobs before training.
+    output_ids = result.get("output_ids", meta_info.get("output_ids", []))
+    if output_ids:
+        return output_ids, [0.0] * len(output_ids)
+
+    return [], []
+
+
 def _require_sglang():
     """Import `sglang` lazily so test collection works without the optional extra."""
     try:
@@ -176,9 +198,16 @@ class SGLangGenerationWorker:
             f"bundle_indices={bundle_indices}, global_cvd={global_cvd}"
         )
 
-        # Get current node IP and a free port for the server
+        # Get current node IP and free ports for the server. SGLang validates
+        # gRPC separately, so pass an explicit free gRPC port rather than
+        # letting a high HTTP port overflow above 65535.
         node_ip = _get_node_ip_local()
         free_port = _get_free_port_local()
+        grpc_port = _get_free_port_local()
+        while grpc_port == free_port:
+            grpc_port = _get_free_port_local()
+
+        os.environ["SGLANG_GRPC_PORT"] = str(grpc_port)
 
         # Build SGLang server arguments
         kwargs = {
@@ -207,6 +236,7 @@ class SGLangGenerationWorker:
         for key in [
             "dtype",
             "kv_cache_dtype",
+            "skip_tokenizer_init",
             "context_length",
             "max_running_requests",
             "chunked_prefill_size",
@@ -217,7 +247,34 @@ class SGLangGenerationWorker:
             "log_level",
             "mem_fraction_static",
             "allow_auto_truncate",
+            "attention_backend",
+            "sampling_backend",
+            "enable_multimodal",
+            "disable_cuda_graph",
+            "disable_radix_cache",
+            "disable_cuda_graph_padding",
+            "cuda_graph_max_bs",
+            "cuda_graph_bs",
             "disable_piecewise_cuda_graph",
+            "enable_nccl_nvls",
+            "disable_outlines_disk_cache",
+            "disable_custom_all_reduce",
+            "disable_overlap_schedule",
+            "enable_mixed_chunk",
+            "enable_dp_attention",
+            "enable_ep_moe",
+            "enable_torch_compile",
+            "torch_compile_max_bs",
+            "torchao_config",
+            "enable_nan_detection",
+            "enable_p2p_check",
+            "triton_attention_reduce_in_fp32",
+            "triton_attention_num_kv_splits",
+            "num_continuous_decode_steps",
+            "enable_multithread_load",
+            "enable_fast_load",
+            "dllm_algorithm",
+            "dllm_algorithm_config",
         ]:
             if key in self.sglang_cfg:
                 kwargs[key] = self.sglang_cfg[key]
@@ -463,19 +520,7 @@ class SGLangGenerationWorker:
             )
             raise
 
-        # Extract generated tokens and logprobs
-        meta_info = result.get("meta_info", {})
-        output_token_logprobs = meta_info.get("output_token_logprobs", [])
-
-        if output_token_logprobs:
-            new_tokens = [item[1] for item in output_token_logprobs]
-            new_logprobs = [item[0] for item in output_token_logprobs]
-        else:
-            # Fallback: empty if token logprobs not available
-            new_tokens = []
-            new_logprobs = []
-
-        return new_tokens, new_logprobs
+        return _extract_generated_tokens_and_logprobs(result)
 
     async def _generate_async(self, tasks):
         """Execute generation tasks with concurrency control.
