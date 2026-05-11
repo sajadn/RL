@@ -99,6 +99,12 @@ class ClippedPGLossConfig(TypedDict):
     # Lower bound for ICE-POP / seq-mask-tis filtering
     truncated_importance_sampling_ratio_min: NotRequired[float | None]
     token_level_loss: bool
+    # StableDRL unconditional clipping: always use the clipped PPO ratio
+    # instead of the sign-conditional PPO min/max surrogate.
+    stable_drl_unconditional_clipping: bool
+    # StableDRL self-normalization: normalize the weighted actor loss by the
+    # sum of the clipped policy ratios instead of a fixed valid-token/sample count.
+    stable_drl_self_normalization: bool
     # If True, apply the off-policy importance-sampling correction at the
     # sequence level (one weight per generated sample), as in GSPO.
     # If False (default), correction is applied at the token level as in the
@@ -182,6 +188,10 @@ class ClippedPGLossFn(LossFunction):
         self.force_on_policy_ratio = cfg.get(
             "force_on_policy_ratio", False
         )  # Force ratio to 1.0
+        self.stable_drl_unconditional_clipping = cfg[
+            "stable_drl_unconditional_clipping"
+        ]
+        self.stable_drl_self_normalization = cfg["stable_drl_self_normalization"]
         self.use_on_policy_kl_approximation = cfg["use_on_policy_kl_approximation"]
         self.use_importance_sampling_correction = cfg[
             "use_importance_sampling_correction"
@@ -451,7 +461,10 @@ class ClippedPGLossFn(LossFunction):
         loss2 = -advantages * ratios_clamped
 
         # Determine which value to use for clipping (max for pessimistic estimate)
-        clip_loss = torch.max(loss1, loss2)
+        if self.stable_drl_unconditional_clipping:
+            clip_loss = loss2
+        else:
+            clip_loss = torch.max(loss1, loss2)
 
         # Dual-clipping see https://arxiv.org/pdf/1912.09729
         if self.ratio_clip_c is not None:
@@ -573,22 +586,50 @@ class ClippedPGLossFn(LossFunction):
         else:
             importance_weights_to_use = torch.ones_like(prev_logprobs)
 
+        stable_drl_normalization_weights = (
+            importance_weights_to_use.detach() * ratios_clamped.detach()
+        )
+
         if self.loss_type == LossType.TOKEN_LEVEL:
-            actor_loss = masked_mean(
-                importance_weights_to_use * clip_loss,
-                mask,
-                global_normalization_factor=global_valid_toks,
-            )
+            weighted_clip_loss = importance_weights_to_use * clip_loss
+            if self.stable_drl_self_normalization:
+                actor_loss = (
+                    torch.sum(weighted_clip_loss * mask)
+                    / (torch.sum(stable_drl_normalization_weights * mask) + 1e-8)
+                )
+            else:
+                actor_loss = masked_mean(
+                    weighted_clip_loss,
+                    mask,
+                    global_normalization_factor=global_valid_toks,
+                )
         else:
-            actor_loss = masked_mean(
-                masked_mean(
-                    importance_weights_to_use * clip_loss,
-                    token_mask,
-                    dim=-1,
-                ),
-                sample_mask,
-                global_normalization_factor=global_valid_seqs,
+            per_sample_weighted_loss = masked_mean(
+                importance_weights_to_use * clip_loss,
+                token_mask,
+                dim=-1,
             )
+            per_sample_importance_weights = masked_mean(
+                stable_drl_normalization_weights,
+                token_mask,
+                dim=-1,
+            )
+            if self.stable_drl_self_normalization:
+                actor_loss = (
+                    torch.sum(per_sample_weighted_loss * sample_mask)
+                    / (
+                        torch.sum(
+                            per_sample_importance_weights.detach() * sample_mask
+                        )
+                        + 1e-8
+                    )
+                )
+            else:
+                actor_loss = masked_mean(
+                    per_sample_weighted_loss,
+                    sample_mask,
+                    global_normalization_factor=global_valid_seqs,
+                )
 
         # Metric: sampling importance ratio (mean over samples)
         # See: docs/guides/grpo.md#sampling-importance-ratio

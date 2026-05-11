@@ -38,6 +38,8 @@ VAL_BATCH_SIZE="${VAL_BATCH_SIZE:-16}"
 VAL_AT_START="${VAL_AT_START:-false}"
 VAL_AT_END="${VAL_AT_END:-false}"
 KL_PENALTY="${KL_PENALTY:-0.01}"
+STABLE_DRL_UNCONDITIONAL_CLIPPING="${STABLE_DRL_UNCONDITIONAL_CLIPPING:-false}"
+STABLE_DRL_SELF_NORMALIZATION="${STABLE_DRL_SELF_NORMALIZATION:-false}"
 JUSTGRPO_REVEAL_BATCH_SIZE="${JUSTGRPO_REVEAL_BATCH_SIZE:-${LOGPROB_BATCH_SIZE}}"
 JUSTGRPO_TRAIN_REVEAL_BATCH_SIZE="${JUSTGRPO_TRAIN_REVEAL_BATCH_SIZE:-${TRAIN_MICRO_BATCH_SIZE}}"
 MEGATRON_TP_SIZE="${MEGATRON_TP_SIZE:-1}"
@@ -150,6 +152,8 @@ uv run --reinstall-package nemo-rl --extra mcore --with soundfile==0.13.1 --with
   "grpo.max_val_samples=${MAX_VAL_SAMPLES}" \
   "grpo.val_batch_size=${VAL_BATCH_SIZE}" \
   "loss_fn.reference_policy_kl_penalty=${KL_PENALTY}" \
+  "loss_fn.stable_drl_unconditional_clipping=${STABLE_DRL_UNCONDITIONAL_CLIPPING}" \
+  "loss_fn.stable_drl_self_normalization=${STABLE_DRL_SELF_NORMALIZATION}" \
   checkpointing.enabled=true \
   "checkpointing.checkpoint_dir=${CHECKPOINT_DIR}" \
   "checkpointing.save_period=${SAVE_PERIOD}" \
