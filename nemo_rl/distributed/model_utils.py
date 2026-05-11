@@ -1031,6 +1031,93 @@ def from_parallel_logits_to_logprobs(
     return logprobs[:, :-1]
 
 
+def from_parallel_logits_to_same_position_logprobs(
+    vocab_parallel_logits: torch.Tensor,
+    target_positions: torch.Tensor,
+    target_tokens: torch.Tensor,
+    vocab_start_index: int,
+    vocab_end_index: int,
+    tp_group: torch.distributed.ProcessGroup,
+    inference_only: bool = False,
+    chunk_size: Optional[int] = None,
+    sampling_params: Optional[TrainingSamplingParams] = None,
+) -> torch.Tensor:
+    """Get logprobs for target tokens at the same sequence positions.
+
+    The standard autoregressive helper, ``from_parallel_logits_to_logprobs``,
+    interprets logits at sequence position ``t`` as the distribution for the
+    next token ``target[:, t + 1]`` and therefore returns an ``[B, S - 1]``
+    tensor. This helper does not apply that one-token shift. For each row ``i``,
+    it gathers ``log p(target_tokens[i] | logits[i, target_positions[i]])`` and
+    returns one scalar logprob per row.
+
+    Use this for masked in-place objectives, such as JustGRPO leftmost-reveal
+    scoring, where the token at position ``t`` is predicted from the logits at
+    the same position ``t``. The function itself is not diffusion-specific; it
+    only defines the same-position gathering semantics over tensor-parallel
+    logits.
+
+    The sequence position is selected before the distributed log-softmax, so
+    the softmax is computed over ``[B, V_local]`` instead of ``[B, S, V_local]``.
+    This keeps the same gradients for the selected positions while avoiding
+    work and activation memory for unrelated sequence positions. ``chunk_size``
+    is accepted for API compatibility, but sequence chunking is unnecessary
+    after this selection.
+    """
+    if vocab_parallel_logits.ndim != 3:
+        raise ValueError(
+            f"vocab_parallel_logits must be [B, S, V], got {vocab_parallel_logits.shape}"
+        )
+    if target_positions.ndim != 1 or target_tokens.ndim != 1:
+        raise ValueError("target_positions and target_tokens must be 1D tensors")
+    if target_positions.shape[0] != vocab_parallel_logits.shape[0]:
+        raise ValueError(
+            "one target position/token is required for each reveal row: "
+            f"{target_positions.shape[0]} targets for {vocab_parallel_logits.shape[0]} rows"
+        )
+    if target_tokens.shape[0] != vocab_parallel_logits.shape[0]:
+        raise ValueError(
+            "one target position/token is required for each reveal row: "
+            f"{target_tokens.shape[0]} target tokens for {vocab_parallel_logits.shape[0]} rows"
+        )
+
+    batch_size, seq_len, _ = vocab_parallel_logits.shape
+    target_positions = target_positions.to(
+        device=vocab_parallel_logits.device, dtype=torch.long
+    )
+    target_tokens = target_tokens.to(
+        device=vocab_parallel_logits.device, dtype=torch.long
+    )
+    if torch.any((target_positions < 0) | (target_positions >= seq_len)):
+        raise ValueError(
+            f"target_positions must be in [0, {seq_len}), got {target_positions}"
+        )
+
+    row_indices = torch.arange(batch_size, device=vocab_parallel_logits.device)
+    selected_logits = vocab_parallel_logits[row_indices, target_positions, :]
+
+    if need_top_k_or_top_p_filtering(sampling_params):
+        token_logprobs: torch.Tensor = DistributedLogprobWithSampling.apply(  # type: ignore
+            selected_logits.unsqueeze(1),
+            target_tokens.unsqueeze(1),
+            tp_group,
+            sampling_params.top_k,
+            sampling_params.top_p,
+            inference_only,
+        ).squeeze(1)
+    else:
+        token_logprobs: torch.Tensor = DistributedLogprob.apply(  # type: ignore
+            selected_logits,
+            target_tokens,
+            vocab_start_index,
+            vocab_end_index,
+            tp_group,
+            inference_only,
+        )
+
+    return token_logprobs.contiguous()
+
+
 def from_parallel_logits_to_logprobs_packed_sequences(
     vocab_parallel_logits: torch.Tensor,
     target: torch.Tensor,

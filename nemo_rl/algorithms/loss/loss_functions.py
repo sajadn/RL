@@ -258,13 +258,56 @@ class ClippedPGLossFn(LossFunction):
         advantages = data["advantages"][:, 1:]
         prev_logprobs = data["prev_logprobs"][:, 1:]
         generation_logprobs = data["generation_logprobs"][:, 1:]
+        reference_policy_logprobs = None
+        curr_logprobs_unfiltered = None
         if self.reference_policy_kl_penalty != 0:
             reference_policy_logprobs = data["reference_policy_logprobs"][:, 1:]
             curr_logprobs_unfiltered = data.get(
                 "curr_logprobs_unfiltered", curr_logprobs
             )
 
-        mask = token_mask * sample_mask.unsqueeze(-1)
+        return self.compute_from_aligned_tensors(
+            curr_logprobs=curr_logprobs,
+            token_mask=token_mask,
+            sample_mask=sample_mask,
+            advantages=advantages,
+            prev_logprobs=prev_logprobs,
+            generation_logprobs=generation_logprobs,
+            reference_policy_logprobs=reference_policy_logprobs,
+            curr_logprobs_unfiltered=curr_logprobs_unfiltered,
+            global_valid_seqs=global_valid_seqs,
+            global_valid_toks=global_valid_toks,
+        )
+
+    def compute_from_aligned_tensors(
+        self,
+        curr_logprobs: Tensor,
+        token_mask: Tensor,
+        sample_mask: Tensor,
+        advantages: Tensor,
+        prev_logprobs: Tensor,
+        generation_logprobs: Tensor,
+        global_valid_seqs: torch.Tensor,
+        global_valid_toks: torch.Tensor,
+        reference_policy_logprobs: Tensor | None = None,
+        curr_logprobs_unfiltered: Tensor | None = None,
+    ) -> tuple[torch.Tensor, dict]:
+        """Compute Clipped PG loss from tensors already aligned to scored tokens."""
+        if self.reference_policy_kl_penalty != 0:
+            if reference_policy_logprobs is None:
+                raise ValueError(
+                    "reference_policy_logprobs is required when reference_policy_kl_penalty != 0"
+                )
+            if curr_logprobs_unfiltered is None:
+                curr_logprobs_unfiltered = curr_logprobs
+
+        if sample_mask.ndim < token_mask.ndim:
+            sample_mask_for_tokens = sample_mask.reshape(
+                sample_mask.shape + (1,) * (token_mask.ndim - sample_mask.ndim)
+            )
+        else:
+            sample_mask_for_tokens = sample_mask
+        mask = token_mask * sample_mask_for_tokens
 
         # token_mult_prob_error
         # See more details and other metrics in docs/guides/grpo.md#metrics

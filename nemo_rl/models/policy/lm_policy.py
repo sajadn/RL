@@ -57,6 +57,28 @@ from nemo_rl.utils.timer import Timer
 PathLike = Union[str, "os.PathLike[Any]"]
 
 
+MEGATRON_POLICY_WORKER_FQN = (
+    "nemo_rl.models.policy.workers.megatron_policy_worker.MegatronPolicyWorker"
+)
+JUST_GRPO_MEGATRON_POLICY_WORKER_FQN = (
+    "nemo_rl.models.policy.workers.just_grpo_megatron_policy_worker."
+    "JustGRPOMegatronPolicyWorker"
+)
+
+
+def get_megatron_policy_worker_fqn(config: PolicyConfig) -> str:
+    logprob_estimation = config.get("logprob_estimation", None)
+    if logprob_estimation is None:
+        return MEGATRON_POLICY_WORKER_FQN
+
+    logprob_estimation_type = logprob_estimation["type"]
+    if logprob_estimation_type == "just_grpo_leftmost_reveal":
+        return JUST_GRPO_MEGATRON_POLICY_WORKER_FQN
+    raise ValueError(
+        f"Unsupported policy.logprob_estimation.type={logprob_estimation_type}"
+    )
+
+
 class Policy(ColocatablePolicyInterface, GenerationInterface):
     def __init__(
         self,
@@ -104,7 +126,7 @@ class Policy(ColocatablePolicyInterface, GenerationInterface):
                 "Disable policy.sequence_packing.enabled or policy.draft."
             )
         if megatron_enable:
-            worker_builder_cls_fqn = "nemo_rl.models.policy.workers.megatron_policy_worker.MegatronPolicyWorker"
+            worker_builder_cls_fqn = get_megatron_policy_worker_fqn(config)
             tp_size = config["megatron_cfg"]["tensor_model_parallel_size"]
             pp_size = config["megatron_cfg"]["pipeline_model_parallel_size"]
             cp_size = config["megatron_cfg"]["context_parallel_size"]
@@ -122,6 +144,13 @@ class Policy(ColocatablePolicyInterface, GenerationInterface):
                 raise ValueError(
                     "Please either set policy.megatron_cfg.enabled=true to use Megatron training backend "
                     "or set policy.dtensor_cfg.enabled=true to use DTensor training backend."
+                )
+
+            logprob_estimation = config.get("logprob_estimation", None)
+            if logprob_estimation is not None:
+                raise ValueError(
+                    "policy.logprob_estimation currently supports Megatron backend only. "
+                    "Set policy.megatron_cfg.enabled=true or remove policy.logprob_estimation."
                 )
 
             # Check if _v2 is enabled in dtensor_cfg (defaults to False for backward compatibility)

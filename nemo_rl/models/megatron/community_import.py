@@ -13,11 +13,51 @@
 # limitations under the License.
 
 import os
+from functools import cached_property
 from typing import Any, Optional
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge as AutoBridgeBase
 
 from nemo_rl.models.policy import MegatronConfig
+
+
+def get_bridge_from_hf_pretrained(hf_model_name: str, **config_overrides: Any):
+    """Build an AutoBridge, routing Nemotron-Diffusion configs to its bridge."""
+    try:
+        return AutoBridge.from_hf_pretrained(
+            hf_model_name, trust_remote_code=True, **config_overrides
+        )
+    except ValueError as e:
+        if "MinistralDiffEncoderModel" not in str(e):
+            raise
+
+        from megatron.bridge.diffusion.conversion.nemotron_diffusion.nemotron_diffusion_bridge import (
+            NemotronDiffusionBridge,
+        )
+
+        class NemotronDiffusionAutoBridge(AutoBridgeBase):
+            """AutoBridge variant for MinistralDiffEncoderModel."""
+
+            def __init__(self, hf_pretrained):
+                super().__init__(hf_pretrained)
+                self._nemotron_bridge = NemotronDiffusionBridge()
+
+            @classmethod
+            def _validate_config(cls, config, path=None):
+                return None
+
+            @property
+            def _model_bridge(self):
+                return self._nemotron_bridge
+
+            @cached_property
+            def _causal_lm_architecture(self):
+                return "MinistralDiffEncoderModel"
+
+        return NemotronDiffusionAutoBridge.from_hf_pretrained(
+            hf_model_name, trust_remote_code=True, **config_overrides
+        )
 
 
 def import_model_from_hf_name(
@@ -33,9 +73,9 @@ def import_model_from_hf_name(
         output_path: Directory to write the Megatron checkpoint (e.g., /tmp/megatron_ckpt).
         megatron_config: Optional megatron config with paralellism settings for distributed megatron model import.
     """
-    bridge = AutoBridge.from_hf_pretrained(
-        hf_model_name, trust_remote_code=True, **config_overrides
-    )
+    bridge = get_bridge_from_hf_pretrained(hf_model_name, **config_overrides)
+    for key, value in config_overrides.items():
+        setattr(bridge.hf_pretrained.config, key, value)
 
     model_provider = bridge.to_megatron_provider(load_weights=True)
 
@@ -133,9 +173,7 @@ def export_model_from_megatron(
     except ImportError:
         raise ImportError("megatron.bridge.training is not available.")
 
-    bridge = AutoBridge.from_hf_pretrained(
-        hf_model_name, trust_remote_code=True, **hf_overrides
-    )
+    bridge = get_bridge_from_hf_pretrained(hf_model_name, **hf_overrides)
 
     # Export performs on CPU with proper distributed context
     with temporary_distributed_context(backend="gloo"):

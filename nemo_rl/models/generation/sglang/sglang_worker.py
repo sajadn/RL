@@ -13,9 +13,11 @@
 # limitations under the License.
 
 import asyncio
+import fcntl
 import logging
 import multiprocessing
 import os
+import socket
 import time
 from typing import Any, Optional
 
@@ -75,6 +77,105 @@ def _require_sglang():
         ) from e
 
     return launch_server, ServerArgs, kill_process_tree
+
+
+def _is_port_free_local(port: int) -> bool:
+    """Return whether a local TCP port is currently available to bind."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind(("", port))
+        except OSError:
+            return False
+    return True
+
+
+def _get_env_int(name: str, default: int) -> int:
+    """Read an integer environment variable with a defensive fallback."""
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _try_reserve_port_local(port: int) -> int | None:
+    """Reserve a local port candidate with a lock file.
+
+    The TCP bind check by itself has a race: the socket is released before
+    SGLang's Uvicorn process binds it. Keeping a per-port lock open prevents
+    other NeMo-RL SGLang actors on the same node from choosing the same port
+    while this worker owns the server process.
+    """
+    lock_dir = os.environ.get(
+        "NEMO_RL_SGLANG_PORT_LOCK_DIR", "/tmp/nemo_rl_sglang_ports"
+    )
+    os.makedirs(lock_dir, exist_ok=True)
+    lock_fd = os.open(
+        os.path.join(lock_dir, f"{port}.lock"), os.O_CREAT | os.O_RDWR, 0o600
+    )
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(lock_fd)
+        return None
+
+    if not _is_port_free_local(port):
+        os.close(lock_fd)
+        return None
+
+    os.ftruncate(lock_fd, 0)
+    os.write(lock_fd, str(os.getpid()).encode())
+    return lock_fd
+
+
+def _release_port_lock(lock_fd: int | None) -> None:
+    """Release a port lock file descriptor."""
+    if lock_fd is None:
+        return
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    finally:
+        os.close(lock_fd)
+
+
+def _reserve_ranked_free_port_local(
+    rank: int, offset: int, attempt: int = 0
+) -> tuple[int, int]:
+    """Pick and reserve a per-rank port from a broad, job-specific range."""
+    slurm_job_id = _get_env_int("SLURM_JOB_ID", 0)
+    port_offset = _get_env_int("SGLANG_PORT_OFFSET", 0)
+    port_min = _get_env_int("NEMO_RL_SGLANG_PORT_MIN", 20000)
+    port_max = _get_env_int("NEMO_RL_SGLANG_PORT_MAX", 60000)
+    rank_stride_pairs = _get_env_int("NEMO_RL_SGLANG_RANK_PORT_STRIDE", 128)
+    scan_attempts = _get_env_int("NEMO_RL_SGLANG_PORT_SCAN_ATTEMPTS", 128)
+
+    if port_min % 2:
+        port_min += 1
+    if port_max <= port_min + 1:
+        port = _get_free_port_local()
+        lock_fd = _try_reserve_port_local(port)
+        if lock_fd is None:
+            raise RuntimeError(f"Could not reserve fallback SGLang port {port}")
+        return port, lock_fd
+
+    usable_pairs = max(1, (port_max - port_min) // 2)
+    job_seed = (slurm_job_id * 1315423911 + port_offset) % usable_pairs
+    rank_seed = rank * rank_stride_pairs
+    attempt_seed = attempt * rank_stride_pairs * max(rank + 1, 16)
+    start_pair = (job_seed + rank_seed + attempt_seed) % usable_pairs
+
+    for extra_pair in range(min(scan_attempts, usable_pairs)):
+        pair = (start_pair + extra_pair) % usable_pairs
+        port = port_min + pair * 2 + offset
+        if port <= port_max:
+            lock_fd = _try_reserve_port_local(port)
+            if lock_fd is not None:
+                return port, lock_fd
+
+    port = _get_free_port_local()
+    lock_fd = _try_reserve_port_local(port)
+    if lock_fd is None:
+        raise RuntimeError(f"Could not reserve fallback SGLang port {port}")
+    return port, lock_fd
 
 
 @ray.remote(
@@ -198,16 +299,9 @@ class SGLangGenerationWorker:
             f"bundle_indices={bundle_indices}, global_cvd={global_cvd}"
         )
 
-        # Get current node IP and free ports for the server. SGLang validates
-        # gRPC separately, so pass an explicit free gRPC port rather than
-        # letting a high HTTP port overflow above 65535.
+        # Get current node IP. Ports are assigned immediately before launch so
+        # that startup retries can move away from late port collisions.
         node_ip = _get_node_ip_local()
-        free_port = _get_free_port_local()
-        grpc_port = _get_free_port_local()
-        while grpc_port == free_port:
-            grpc_port = _get_free_port_local()
-
-        os.environ["SGLANG_GRPC_PORT"] = str(grpc_port)
 
         # Build SGLang server arguments
         kwargs = {
@@ -227,9 +321,10 @@ class SGLangGenerationWorker:
             "ep_size": self.sglang_cfg["ep_size"],
             # Always skip warmup to prevent warmup timeout
             "skip_server_warmup": self.sglang_cfg.get("skip_server_warmup", True),
-            # Server network settings - listen on all interfaces, use the free port we found
+            # Server network settings. The concrete port is filled in by
+            # _launch_server_process_with_retries.
             "host": "0.0.0.0",
-            "port": free_port,
+            "port": 0,
             "torchao_config": "",
         }
 
@@ -246,6 +341,7 @@ class SGLangGenerationWorker:
             "cpu_offload_gb",
             "log_level",
             "mem_fraction_static",
+            "max_total_tokens",
             "allow_auto_truncate",
             "attention_backend",
             "sampling_backend",
@@ -282,16 +378,16 @@ class SGLangGenerationWorker:
         server_args = ServerArgs(**kwargs)
         # Save server_args and base_url for use in generate() and _make_request()
         self.server_args = server_args
-        self.base_url = f"http://{node_ip}:{free_port}"
-
-        logger.info(
-            f"[SGLang Worker] Rank {self.global_rank} Starting on {self.base_url}, CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES', None)}, base_gpu_id: {base_gpu_id}"
-        )
+        self.base_url = ""
 
         self.session = None
         self.connector = None
 
-        self.server_process = self._launch_server_process(server_args)
+        self.server_process = self._launch_server_process_with_retries(
+            server_args=server_args,
+            node_ip=node_ip,
+            base_gpu_id=base_gpu_id,
+        )
 
     def get_base_url(self) -> str:
         """Get the base URL of this SGLang server."""
@@ -553,7 +649,68 @@ class SGLangGenerationWorker:
 
         return results
 
-    def _launch_server_process(self, server_args: Any) -> multiprocessing.Process:
+    def _launch_server_process_with_retries(
+        self, server_args: Any, node_ip: str, base_gpu_id: int
+    ) -> multiprocessing.Process:
+        """Launch SGLang, retrying with new ports after bind races."""
+        max_attempts = _get_env_int("NEMO_RL_SGLANG_PORT_LAUNCH_ATTEMPTS", 4)
+        total_wait_time = _get_env_int("NEMO_RL_SGLANG_STARTUP_TIMEOUT", 1200)
+        per_attempt_wait_time = _get_env_int(
+            "NEMO_RL_SGLANG_STARTUP_TIMEOUT_PER_ATTEMPT",
+            max(60, total_wait_time // max_attempts),
+        )
+        last_error = None
+        self._sglang_port_locks = []
+        for attempt in range(max_attempts):
+            attempt_locks = []
+            try:
+                free_port, free_port_lock = _reserve_ranked_free_port_local(
+                    self.global_rank, 0, attempt
+                )
+                grpc_port, grpc_port_lock = _reserve_ranked_free_port_local(
+                    self.global_rank, 1, attempt
+                )
+                attempt_locks.extend([free_port_lock, grpc_port_lock])
+                while grpc_port == free_port:
+                    _release_port_lock(grpc_port_lock)
+                    grpc_port, grpc_port_lock = _reserve_ranked_free_port_local(
+                        self.global_rank, 1, attempt + 1
+                    )
+                    attempt_locks[-1] = grpc_port_lock
+
+                server_args.port = free_port
+                os.environ["SGLANG_GRPC_PORT"] = str(grpc_port)
+                self.base_url = f"http://{node_ip}:{free_port}"
+                logger.info(
+                    f"[SGLang Worker] Rank {self.global_rank} Starting on {self.base_url}, "
+                    f"grpc_port={grpc_port}, attempt={attempt + 1}/{max_attempts}, "
+                    f"startup_timeout_per_attempt={per_attempt_wait_time}s, "
+                    f"CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES', None)}, "
+                    f"base_gpu_id: {base_gpu_id}"
+                )
+
+                process = self._launch_server_process(
+                    server_args, max_wait_time=per_attempt_wait_time
+                )
+                self._sglang_port_locks.extend(attempt_locks)
+                return process
+            except (RuntimeError, TimeoutError) as e:
+                last_error = e
+                for lock_fd in attempt_locks:
+                    _release_port_lock(lock_fd)
+                logger.warning(
+                    f"[SGLang Worker] Rank {self.global_rank} failed to launch at "
+                    f"{self.base_url}: {e}"
+                )
+
+        raise RuntimeError(
+            f"[SGLang Worker] Rank {self.global_rank} failed to launch after "
+            f"{max_attempts} port attempts"
+        ) from last_error
+
+    def _launch_server_process(
+        self, server_args: Any, max_wait_time: int
+    ) -> multiprocessing.Process:
         """Launch the SGLang server process and wait for it to be ready."""
         # Ensure `sglang` is importable when we actually start a server.
         launch_server, _, kill_process_tree = _require_sglang()
@@ -566,10 +723,14 @@ class SGLangGenerationWorker:
             "Content-Type": "application/json; charset=utf-8",
         }
 
-        max_wait_time = 300  # 5 minutes timeout
         start_time = time.time()
         with requests.Session() as session:
             while True:
+                if not p.is_alive():
+                    raise RuntimeError(
+                        f"[SGLang Server] Rank {self.global_rank} Server process "
+                        f"terminated unexpectedly with exit code {p.exitcode}."
+                    )
                 if time.time() - start_time > max_wait_time:
                     kill_process_tree(p.pid)
                     raise TimeoutError(
@@ -586,11 +747,6 @@ class SGLangGenerationWorker:
                         break
                 except requests.RequestException:
                     pass
-
-                if not p.is_alive():
-                    raise RuntimeError(
-                        f"[SGLang Server] Rank {self.global_rank} Server process terminated unexpectedly."
-                    )
 
                 time.sleep(2)
         return p
@@ -822,6 +978,9 @@ class SGLangGenerationWorker:
 
             if self.server_process.is_alive():
                 return False
+            for lock_fd in getattr(self, "_sglang_port_locks", []):
+                _release_port_lock(lock_fd)
+            self._sglang_port_locks = []
             return True
 
         except Exception as e:

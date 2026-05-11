@@ -20,7 +20,6 @@ import warnings
 from typing import Any, Callable, Optional, TypeVar
 
 import torch
-from megatron.bridge import AutoBridge
 from megatron.bridge.models.model_provider import get_model
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training import fault_tolerance
@@ -75,7 +74,10 @@ except ImportError:
 
 from nemo_rl.algorithms.logits_sampling_utils import TrainingSamplingParams
 from nemo_rl.distributed.named_sharding import NamedSharding
-from nemo_rl.models.megatron.community_import import import_model_from_hf_name
+from nemo_rl.models.megatron.community_import import (
+    get_bridge_from_hf_pretrained,
+    import_model_from_hf_name,
+)
 from nemo_rl.models.megatron.config import ModelAndOptimizerState, RuntimeConfig
 from nemo_rl.models.megatron.draft.utils import (
     build_draft_model,
@@ -1149,9 +1151,7 @@ def finalize_megatron_setup(
     )
 
     dp_size = worker_sharding_annotations.get_axis_size("data_parallel")
-    megatron_bridge = AutoBridge.from_hf_pretrained(
-        hf_model_name, trust_remote_code=True
-    )
+    megatron_bridge = get_bridge_from_hf_pretrained(hf_model_name)
 
     should_disable_forward_pre_hook = (
         config["megatron_cfg"]["optimizer"]["use_distributed_optimizer"]

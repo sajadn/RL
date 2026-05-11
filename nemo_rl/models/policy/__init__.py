@@ -313,12 +313,45 @@ class DynamicBatchingConfig(TypedDict):
     sequence_length_round: int
 
 
+class JustGRPOLeftmostRevealLogprobEstimationConfig(TypedDict):
+    """Estimate token logprobs with the JustGRPO leftmost-reveal objective.
+
+    This estimator expands each sequence into one masked reveal row per selected
+    response token. It is intended for diffusion-style policies whose training
+    likelihood should match the JustGRPO leftmost token prediction objective.
+    """
+
+    type: Literal["just_grpo_leftmost_reveal"]
+    # Reveal schedule. "sparse" creates rows only for valid response tokens.
+    # "fixed_response_window" creates max_reveal_positions rows per sample and
+    # masks invalid rows out of the loss, keeping DP ranks schedule-aligned.
+    reveal_schedule: Literal["sparse", "fixed_response_window"]
+    # "inference_bidirectional" uses the model's single-stream diffusion
+    # inference attention path for reveal rows instead of the doubled [xt | x0]
+    # sbd training attention.
+    megatron_attention_mode: Literal[
+        "training", "inference_bidirectional", "inference_block_bidirectional"
+    ]
+    mask_token_id: int
+    # Required for reveal_schedule="fixed_response_window"; typically set to
+    # policy.generation.max_new_tokens.
+    max_reveal_positions: NotRequired[int]
+    reveal_batch_size: int
+    train_reveal_batch_size: int
+
+
+LogprobEstimationConfig = JustGRPOLeftmostRevealLogprobEstimationConfig
+
+
 class PolicyConfig(TypedDict):
     model_name: str
     tokenizer: TokenizerConfig
     train_global_batch_size: int
     train_micro_batch_size: int
     logprob_batch_size: NotRequired[int]
+    # If omitted, policy workers use the default autoregressive next-token
+    # logprob path. Set this only when a policy needs alternate logprob semantics.
+    logprob_estimation: NotRequired[LogprobEstimationConfig]
     # If set, log probability computation is chunked along the sequence dimension to avoid GPU OOM (especially during backward pass).
     # Within each chunk loop, logits casting (from float16/bfloat16 to float32) is done to prevent holding the entire float32 logits tensor in memory.
     # If None, chunking is disabled and the full sequence is processed at once.

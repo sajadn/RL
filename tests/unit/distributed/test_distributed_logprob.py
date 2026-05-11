@@ -30,6 +30,7 @@ from nemo_rl.distributed.model_utils import (
     ChunkedDistributedLogprob,
     DistributedLogprob,
     _compute_distributed_log_softmax,
+    from_parallel_logits_to_same_position_logprobs,
 )
 
 
@@ -398,6 +399,79 @@ def test_chunked_distributed_entropy(
 ):
     test_fn = functools.partial(
         _run_chunked_distributed_entropy,
+        tp_size=tp_size,
+        chunk_size=chunk_size,
+        inference_only=inference_only,
+    )
+    distributed_test_runner(test_fn, world_size=tp_size)
+
+
+# ---------------------------------------------------------------------------
+# Same-position logprob helper
+# ---------------------------------------------------------------------------
+
+
+def _run_same_position_logprobs(rank, world_size, tp_size, chunk_size, inference_only):
+    """Test same-position logprobs against full-vocab PyTorch baseline."""
+    tp_group = torch.distributed.new_group(ranks=list(range(tp_size)))
+
+    batch_size = 3
+    seq_len = 5
+    vocab_size = 64
+    vocab_part_size = vocab_size // tp_size
+    vocab_start_index = rank * vocab_part_size
+    vocab_end_index = (rank + 1) * vocab_part_size
+
+    torch.manual_seed(2026)
+    full_logits = torch.randn(batch_size, seq_len, vocab_size, device="cuda")
+    target_positions = torch.tensor([0, 3, 4], device="cuda")
+    target_tokens = torch.tensor([5, 37, 63], device="cuda")
+
+    baseline_logits = full_logits.clone().detach().requires_grad_(not inference_only)
+    baseline_logprobs = torch.nn.functional.log_softmax(baseline_logits, dim=-1)
+    expected = baseline_logprobs[
+        torch.arange(batch_size, device="cuda"), target_positions, target_tokens
+    ]
+
+    local_logits = full_logits[:, :, vocab_start_index:vocab_end_index]
+    local_logits = local_logits.clone().detach().requires_grad_(not inference_only)
+
+    actual = from_parallel_logits_to_same_position_logprobs(
+        local_logits,
+        target_positions=target_positions,
+        target_tokens=target_tokens,
+        vocab_start_index=vocab_start_index,
+        vocab_end_index=vocab_end_index,
+        tp_group=tp_group,
+        inference_only=inference_only,
+        chunk_size=chunk_size,
+    )
+
+    torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-4)
+
+    if not inference_only:
+        expected.sum().backward()
+        actual.sum().backward()
+        baseline_grad = baseline_logits.grad[:, :, vocab_start_index:vocab_end_index]
+        torch.testing.assert_close(
+            local_logits.grad, baseline_grad, rtol=1e-4, atol=1e-4
+        )
+
+
+@pytest.mark.parametrize(
+    "tp_size, chunk_size, inference_only",
+    [
+        (1, None, False),
+        (2, None, False),
+        (1, 2, True),
+        (2, 2, True),
+    ],
+)
+def test_from_parallel_logits_to_same_position_logprobs(
+    distributed_test_runner, tp_size, chunk_size, inference_only
+):
+    test_fn = functools.partial(
+        _run_same_position_logprobs,
         tp_size=tp_size,
         chunk_size=chunk_size,
         inference_only=inference_only,
