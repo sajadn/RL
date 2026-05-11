@@ -4317,6 +4317,7 @@ requires-dist = [
     { name = "setuptools" },
     { name = "sglang", marker = "extra == 'sglang'", git = "https://github.com/supercoolgreatcoder/sglang.git?subdirectory=python&branch=nemotron-dllm-upstream-5" },
     { name = "sglang-kernel", marker = "extra == 'sglang'", index = "https://docs.sglang.io/whl/cu129" },
+    { name = "soundfile", specifier = ">=0.13.1" },
     { name = "swanlab" },
     { name = "sympy", specifier = ">=1.14.0" },
     { name = "tensorboard" },
@@ -6928,7 +6929,7 @@ wheels = [
 [[package]]
 name = "sglang"
 version = "0.5.10"
-source = { git = "https://github.com/supercoolgreatcoder/sglang.git?subdirectory=python&branch=nemotron-dllm-upstream-5#6e180058ad266cde5b41d8a4f0190f5a2972230c" }
+source = { git = "https://github.com/supercoolgreatcoder/sglang.git?subdirectory=python&branch=nemotron-dllm-upstream-5#a652eb48fa69bf0762c7de9f389474abbebe7b9d" }
 dependencies = [
     { name = "aiohttp" },
     { name = "anthropic" },
