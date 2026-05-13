@@ -23,7 +23,7 @@ from nemo_rl.models.policy import MegatronConfig
 
 
 def get_bridge_from_hf_pretrained(hf_model_name: str, **config_overrides: Any):
-    """Build an AutoBridge, routing Nemotron-Diffusion configs to its bridge."""
+    """Build an AutoBridge, routing Nemotron-Diffusion configs to NexTron."""
     try:
         return AutoBridge.from_hf_pretrained(
             hf_model_name, trust_remote_code=True, **config_overrides
@@ -32,16 +32,16 @@ def get_bridge_from_hf_pretrained(hf_model_name: str, **config_overrides: Any):
         if "MinistralDiffEncoderModel" not in str(e):
             raise
 
-        from megatron.bridge.diffusion.conversion.nemotron_diffusion.nemotron_diffusion_bridge import (
-            NemotronDiffusionBridge,
+        from megatron.bridge.diffusion.conversion.nextron.nextron_bridge import (
+            NexTronBridge,
         )
 
-        class NemotronDiffusionAutoBridge(AutoBridgeBase):
+        class NexTronAutoBridge(AutoBridgeBase):
             """AutoBridge variant for MinistralDiffEncoderModel."""
 
             def __init__(self, hf_pretrained):
                 super().__init__(hf_pretrained)
-                self._nemotron_bridge = NemotronDiffusionBridge()
+                self._nextron_bridge = NexTronBridge()
 
             @classmethod
             def _validate_config(cls, config, path=None):
@@ -49,13 +49,13 @@ def get_bridge_from_hf_pretrained(hf_model_name: str, **config_overrides: Any):
 
             @property
             def _model_bridge(self):
-                return self._nemotron_bridge
+                return self._nextron_bridge
 
             @cached_property
             def _causal_lm_architecture(self):
                 return "MinistralDiffEncoderModel"
 
-        return NemotronDiffusionAutoBridge.from_hf_pretrained(
+        return NexTronAutoBridge.from_hf_pretrained(
             hf_model_name, trust_remote_code=True, **config_overrides
         )
 
@@ -159,7 +159,6 @@ def export_model_from_megatron(
     hf_tokenizer_path: str,
     overwrite: bool = False,
     hf_overrides: Optional[dict[str, Any]] = {},
-    strict: bool = True,
 ):
     if os.path.exists(output_path) and not overwrite:
         raise FileExistsError(
@@ -177,9 +176,13 @@ def export_model_from_megatron(
 
     # Export performs on CPU with proper distributed context
     with temporary_distributed_context(backend="gloo"):
+        from megatron.bridge.utils.instantiate_utils import (
+            register_allowed_target_prefix,
+        )
         # Need to set model parallel cuda manual seed for mamba mixer
         from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed
 
+        register_allowed_target_prefix("transformers_modules.")
         model_parallel_cuda_manual_seed(0)
 
         # Load the Megatron model
@@ -188,7 +191,7 @@ def export_model_from_megatron(
         )
 
         # Save in HuggingFace format
-        bridge.save_hf_pretrained(megatron_model, output_path, strict=strict)
+        bridge.save_hf_pretrained(megatron_model, output_path)
 
     # resetting mcore state
     import megatron.core.rerun_state_machine

@@ -31,6 +31,7 @@ TRAIN_GLOBAL_BATCH_SIZE="${TRAIN_GLOBAL_BATCH_SIZE:-64}"
 TRAIN_MICRO_BATCH_SIZE="${TRAIN_MICRO_BATCH_SIZE:-8}"
 LOGPROB_BATCH_SIZE="${LOGPROB_BATCH_SIZE:-64}"
 MAX_TOTAL_SEQUENCE_LENGTH="${MAX_TOTAL_SEQUENCE_LENGTH:-640}"
+HF_CONFIG_SEQ_LENGTH="${HF_CONFIG_SEQ_LENGTH:-${MAX_TOTAL_SEQUENCE_LENGTH}}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-256}"
 SPLIT_VALIDATION_SIZE="${SPLIT_VALIDATION_SIZE:-0.01}"
 VAL_PERIOD="${VAL_PERIOD:-10}"
@@ -85,8 +86,11 @@ export NRL_REFIT_BUFFER_MEMORY_RATIO="${NRL_REFIT_BUFFER_MEMORY_RATIO:-0.3}"
 # Important: do not expose the Megatron bridge patch to the Ray driver.
 # Pass it only to Megatron policy workers via policy.megatron_cfg.env_vars.
 unset PYTHONPATH
+if [[ -n "${SGLANG_SOURCE_PATH:-}" ]]; then
+  export PYTHONPATH="${SGLANG_SOURCE_PATH}"
+fi
 
-uv run --reinstall-package nemo-rl --extra mcore --with soundfile==0.13.1 --with onnx==1.19.1 python examples/run_grpo.py \
+uv run --extra mcore --with soundfile==0.13.1 --with onnx==1.19.1 python examples/run_grpo.py \
   --config "${CONFIG}" \
   "policy.model_name=${POLICY_MODEL_NAME}" \
   "policy.tokenizer.name=${POLICY_MODEL_NAME}" \
@@ -116,6 +120,7 @@ uv run --reinstall-package nemo-rl --extra mcore --with soundfile==0.13.1 --with
   "policy.train_micro_batch_size=${TRAIN_MICRO_BATCH_SIZE}" \
   "policy.logprob_batch_size=${LOGPROB_BATCH_SIZE}" \
   "policy.max_total_sequence_length=${MAX_TOTAL_SEQUENCE_LENGTH}" \
+  "+policy.hf_config_overrides.seq_length=${HF_CONFIG_SEQ_LENGTH}" \
   "policy.generation.max_new_tokens=${MAX_NEW_TOKENS}" \
   "policy.generation.vllm_cfg.max_model_len=${MAX_TOTAL_SEQUENCE_LENGTH}" \
   policy.generation.vllm_cfg.enforce_eager=true \

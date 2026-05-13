@@ -20,6 +20,7 @@ import warnings
 from typing import Any, Callable, Optional, TypeVar
 
 import torch
+from megatron.bridge import AutoBridge
 from megatron.bridge.models.model_provider import get_model
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training import fault_tolerance
@@ -38,6 +39,7 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.initialize import (
     initialize_megatron,
@@ -91,6 +93,29 @@ from nemo_rl.models.policy.utils import (
 )
 
 TokenizerType = TypeVar("TokenizerType", bound=PreTrainedTokenizerBase)
+
+
+def _maybe_log_cuda_memory(label: str) -> None:
+    if os.environ.get("NRL_CUDA_MEMORY_DIAGNOSTICS") != "1":
+        return
+    if not torch.cuda.is_available():
+        print(f"[cuda-memory] {label}: cuda unavailable")
+        return
+
+    device = torch.cuda.current_device()
+    free, total = torch.cuda.mem_get_info(device)
+    allocated = torch.cuda.memory_allocated(device)
+    reserved = torch.cuda.memory_reserved(device)
+    max_allocated = torch.cuda.max_memory_allocated(device)
+    rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else -1
+    print(
+        f"[cuda-memory] rank={rank} device={device} {label}: "
+        f"allocated={allocated / (1024**3):.2f}GB "
+        f"reserved={reserved / (1024**3):.2f}GB "
+        f"max_allocated={max_allocated / (1024**3):.2f}GB "
+        f"free={free / (1024**3):.2f}GB "
+        f"total={total / (1024**3):.2f}GB"
+    )
 
 
 def destroy_parallel_state():
@@ -308,6 +333,10 @@ def setup_model_config(
             "This usually means that the one-time HF->mcore conversion on rank=0 saved to a directory "
             "not being mounted on this node. Please check"
         )
+
+    from megatron.bridge.utils.instantiate_utils import register_allowed_target_prefix
+
+    register_allowed_target_prefix("transformers_modules.")
 
     try:
         cfg_from_pretrained = ConfigContainer.from_yaml(
@@ -630,6 +659,10 @@ def _create_megatron_config(
     dtype: torch.dtype,
 ) -> ConfigContainer:
     """Create the final Megatron configuration container."""
+    validation_config = ValidationConfig()
+    validation_config.eval_global_batch_size = config["train_global_batch_size"]
+    validation_config.eval_micro_batch_size = config["train_micro_batch_size"]
+
     return ConfigContainer(
         model=model_cfg,
         checkpoint=checkpoint_config,
@@ -639,6 +672,7 @@ def _create_megatron_config(
             global_batch_size=config["train_global_batch_size"],  # ignored
             train_iters=config["megatron_cfg"]["train_iters"],
         ),
+        validation=validation_config,
         optimizer=OptimizerConfig(**config["megatron_cfg"]["optimizer"]),
         ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=True,
@@ -820,8 +854,6 @@ def setup_model_and_optimizer(
                 if isinstance(model_module, Float16Module):
                     model_module = model_module.module
                 # Handle VLM models
-                if hasattr(model_module, "thinker"):
-                    model_module = model_module.thinker
                 if hasattr(model_module, "language_model"):
                     model_module = model_module.language_model
                 for layer in model_module.decoder.layers:
@@ -907,6 +939,7 @@ def setup_model_and_optimizer(
         scheduler = None
 
     print("Model, optimizer, and learning rate scheduler built")
+    _maybe_log_cuda_memory("after model optimizer scheduler build")
     torch.distributed.barrier()
 
     if megatron_cfg.peft is not None:
@@ -923,6 +956,7 @@ def setup_model_and_optimizer(
 
     # Load checkpoint if applicable
     if should_load_checkpoint:
+        _maybe_log_cuda_memory("before checkpoint load")
         load_checkpoint(
             state,
             model,
@@ -932,7 +966,12 @@ def setup_model_and_optimizer(
             skip_load_to_model_and_opt=HAVE_FSDP2 and megatron_cfg.dist.use_torch_fsdp2,
         )
         print("Checkpoint loaded")
+        _maybe_log_cuda_memory("after checkpoint load")
+        if os.environ.get("NRL_EMPTY_CACHE_AFTER_CHECKPOINT_LOAD") == "1":
+            torch.cuda.empty_cache()
+            _maybe_log_cuda_memory("after checkpoint load empty_cache")
     torch.distributed.barrier()
+    _maybe_log_cuda_memory("after checkpoint load barrier")
 
     draft_model = get_attached_draft_model(model)
 

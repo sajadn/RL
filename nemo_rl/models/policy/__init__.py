@@ -225,6 +225,12 @@ class MegatronConfig(TypedDict):
     # Attention backend available values:
     # https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/transformer/enums.py#L60
     attention_backend: NotRequired[str]
+    # Optional override for diffusion attention modules during Megatron forward passes.
+    # Valid values are "training", "inference_causal", and "inference_bidirectional".
+    # Recommended default is "training"; AR diffusion rollouts should use "inference_causal".
+    diffusion_attention_mode: NotRequired[
+        Literal["training", "inference_causal", "inference_bidirectional"]
+    ]
     moe_per_layer_logging: bool
     # Set to true to enable DeepEP for expert parallel communication
     # Must set moe_token_dispatcher_type to 'flex'

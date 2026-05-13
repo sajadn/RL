@@ -229,6 +229,48 @@ class MegatronPolicyWorkerImpl(AbstractPolicyWorker, ColocatablePolicyInterface)
         ## used for streaming update inference engine weights
         self._held_gather_buffer = None
 
+    @staticmethod
+    def _diffusion_attention_modules(model: torch.nn.Module) -> list[torch.nn.Module]:
+        """Return diffusion attention modules that expose the NexTron inference API."""
+        return [
+            module
+            for module in model.modules()
+            if hasattr(module, "set_inference_mode")
+            and hasattr(module, "set_inference_params")
+            and hasattr(module, "clear_kv_cache")
+        ]
+
+    @contextmanager
+    def _diffusion_attention_context(self) -> Iterator[None]:
+        """Temporarily switch diffusion attention modules to a configured forward mode."""
+        attention_mode = self.cfg["megatron_cfg"].get(
+            "diffusion_attention_mode", None
+        )
+        if attention_mode is None or attention_mode == "training":
+            yield
+            return
+
+        if attention_mode not in {"inference_causal", "inference_bidirectional"}:
+            raise ValueError(
+                "Unsupported diffusion_attention_mode "
+                f"{attention_mode!r}. Expected one of: training, "
+                "inference_causal, inference_bidirectional."
+            )
+
+        causal = attention_mode == "inference_causal"
+        modules = self._diffusion_attention_modules(self.model)
+        for module in modules:
+            module.clear_kv_cache()
+            module.set_inference_mode(True)
+            module.set_inference_params(causal=causal, cache_enabled=False)
+
+        try:
+            yield
+        finally:
+            for module in modules:
+                module.set_inference_mode(False)
+                module.clear_kv_cache()
+
     def enable_forward_pre_hook(self):
         assert isinstance(self.model, DistributedDataParallel)
         self.model.enable_forward_pre_hook()
@@ -280,7 +322,7 @@ class MegatronPolicyWorkerImpl(AbstractPolicyWorker, ColocatablePolicyInterface)
             # Ensure model is in training mode
             self.model.train()
 
-        with ctx:
+        with ctx, self._diffusion_attention_context():
             all_mb_metrics = []
             losses = []
             total_num_microbatches = 0
@@ -494,19 +536,20 @@ class MegatronPolicyWorkerImpl(AbstractPolicyWorker, ColocatablePolicyInterface)
             use_linear_ce_fusion=use_linear_ce_fusion,
         )
 
-        list_of_logprobs = megatron_forward_backward(
-            model=self.model,
-            data_iterator=mb_iterator,
-            seq_length=padded_seq_length,
-            mbs=micro_batch_size,
-            num_microbatches=num_microbatches,
-            post_processing_fn=logprobs_post_processor,
-            forward_only=True,
-            defer_fp32_logits=self.defer_fp32_logits,
-            sampling_params=self.sampling_params,
-            straggler_timer=self.mcore_state.straggler_timer,
-            use_linear_ce_fusion_loss=use_linear_ce_fusion,
-        )
+        with self._diffusion_attention_context():
+            list_of_logprobs = megatron_forward_backward(
+                model=self.model,
+                data_iterator=mb_iterator,
+                seq_length=padded_seq_length,
+                mbs=micro_batch_size,
+                num_microbatches=num_microbatches,
+                post_processing_fn=logprobs_post_processor,
+                forward_only=True,
+                defer_fp32_logits=self.defer_fp32_logits,
+                sampling_params=self.sampling_params,
+                straggler_timer=self.mcore_state.straggler_timer,
+                use_linear_ce_fusion_loss=use_linear_ce_fusion,
+            )
 
         if parallel_state.is_pipeline_last_stage(ignore_virtual=True):
             all_log_probs_padded = []
@@ -689,18 +732,19 @@ class MegatronPolicyWorkerImpl(AbstractPolicyWorker, ColocatablePolicyInterface)
             straggler_timer=self.mcore_state.straggler_timer,
         )
 
-        list_of_outputs = megatron_forward_backward(
-            model=self.model,
-            data_iterator=mb_iterator,
-            seq_length=padded_seq_length,
-            mbs=micro_batch_size,
-            num_microbatches=num_microbatches,
-            post_processing_fn=TopkLogitsPostProcessor(cfg=self.cfg, k=k),
-            forward_only=True,
-            defer_fp32_logits=self.defer_fp32_logits,
-            sampling_params=self.sampling_params,
-            straggler_timer=self.mcore_state.straggler_timer,
-        )
+        with self._diffusion_attention_context():
+            list_of_outputs = megatron_forward_backward(
+                model=self.model,
+                data_iterator=mb_iterator,
+                seq_length=padded_seq_length,
+                mbs=micro_batch_size,
+                num_microbatches=num_microbatches,
+                post_processing_fn=TopkLogitsPostProcessor(cfg=self.cfg, k=k),
+                forward_only=True,
+                defer_fp32_logits=self.defer_fp32_logits,
+                sampling_params=self.sampling_params,
+                straggler_timer=self.mcore_state.straggler_timer,
+            )
 
         if parallel_state.is_pipeline_last_stage(ignore_virtual=True):
             logits_chunks = []
@@ -1102,11 +1146,7 @@ class MegatronPolicyWorkerImpl(AbstractPolicyWorker, ColocatablePolicyInterface)
         self,
         sglang_url_to_gpu_uuids: dict[str, list[str]],
     ) -> None:
-        """Stream model weights to SGLang servers via HTTP API.
-
-        Args:
-            sglang_url_to_gpu_uuids: Dict mapping SGLang server URL to GPU UUIDs.
-        """
+        """Stream exported HF weights to matching SGLang servers via HTTP API."""
         from nemo_rl.models.policy.utils import stream_weights_via_http_impl
 
         stream_weights_via_http_impl(
