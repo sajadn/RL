@@ -357,6 +357,20 @@ def setup_model_config(
         raise
 
     model_cfg = cfg_from_pretrained.model
+
+    # Workaround: transformers 5.x from_dict() strips custom keys from rope_parameters
+    # (e.g. llama_4_scaling_beta). Reload hf_config from the original HF model to fix this.
+    if getattr(model_cfg, "hf_config", None) is not None:
+        from transformers import AutoConfig
+
+        fresh_hf_config = AutoConfig.from_pretrained(
+            hf_model_name, trust_remote_code=True
+        )
+        hf_text = getattr(model_cfg.hf_config, "text_config", model_cfg.hf_config)
+        fresh_text = getattr(fresh_hf_config, "text_config", fresh_hf_config)
+        if hasattr(fresh_text, "rope_parameters") and fresh_text.rope_parameters:
+            hf_text.rope_parameters = fresh_text.rope_parameters
+
     cfg_from_pretrained.logger = LoggerConfig()
 
     # Apply parallelism settings

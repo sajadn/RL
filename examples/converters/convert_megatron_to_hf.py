@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import argparse
+import inspect
 
 import yaml
 
@@ -82,14 +83,17 @@ def main():
     tokenizer_name = config["policy"]["tokenizer"]["name"]
     hf_overrides = config["policy"].get("hf_overrides", {}) or {}
 
-    export_model_from_megatron(
-        hf_model_name=model_name,
-        input_path=args.megatron_ckpt_path,
-        output_path=args.hf_ckpt_path,
-        hf_tokenizer_path=tokenizer_name,
-        hf_overrides=hf_overrides,
-        strict=not args.no_strict,
-    )
+    export_kwargs = {
+        "hf_model_name": model_name,
+        "input_path": args.megatron_ckpt_path,
+        "output_path": args.hf_ckpt_path,
+        "hf_tokenizer_path": tokenizer_name,
+        "hf_overrides": hf_overrides,
+    }
+    if "strict" in inspect.signature(export_model_from_megatron).parameters:
+        export_kwargs["strict"] = not args.no_strict
+
+    export_model_from_megatron(**export_kwargs)
 
 
 if __name__ == "__main__":

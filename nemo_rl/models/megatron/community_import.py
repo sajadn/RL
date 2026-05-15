@@ -32,8 +32,8 @@ def get_bridge_from_hf_pretrained(hf_model_name: str, **config_overrides: Any):
         if "MinistralDiffEncoderModel" not in str(e):
             raise
 
-        from megatron.bridge.diffusion.conversion.nextron.nextron_bridge import (
-            NexTronBridge,
+        from megatron.bridge.diffusion.conversion.nemotron_labs_diffusion.nemotron_labs_diffusion_bridge import (
+            NemotronLabsDiffusionBridge,
         )
 
         class NexTronAutoBridge(AutoBridgeBase):
@@ -41,7 +41,7 @@ def get_bridge_from_hf_pretrained(hf_model_name: str, **config_overrides: Any):
 
             def __init__(self, hf_pretrained):
                 super().__init__(hf_pretrained)
-                self._nextron_bridge = NexTronBridge()
+                self._nextron_bridge = NemotronLabsDiffusionBridge()
 
             @classmethod
             def _validate_config(cls, config, path=None):
@@ -78,6 +78,10 @@ def import_model_from_hf_name(
         setattr(bridge.hf_pretrained.config, key, value)
 
     model_provider = bridge.to_megatron_provider(load_weights=True)
+    # Propagate config_overrides to the model provider (e.g., seq_length for block mask sizing)
+    for key, value in config_overrides.items():
+        if hasattr(model_provider, key):
+            setattr(model_provider, key, value)
 
     # Keep track of defaults so can restore them to the config after loading the model
     orig_tensor_model_parallel_size = model_provider.tensor_model_parallel_size
