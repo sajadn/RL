@@ -131,6 +131,10 @@ if [[ -n "${SGLANG_MAX_TOTAL_TOKENS}" ]]; then
   EXTRA_OVERRIDES+=("policy.generation.sglang_cfg.max_total_tokens=${SGLANG_MAX_TOTAL_TOKENS}")
 fi
 
+if [[ -n "${SGLANG_ATTENTION_BACKEND:-}" ]]; then
+  EXTRA_OVERRIDES+=("policy.generation.sglang_cfg.attention_backend=${SGLANG_ATTENTION_BACKEND}")
+fi
+
 uv run --reinstall-package nemo-rl --extra mcore --with soundfile==0.13.1 --with onnx==1.19.1 python examples/run_grpo.py \
   --config "${CONFIG}" \
   "cluster.num_nodes=${CLUSTER_NUM_NODES}" \
