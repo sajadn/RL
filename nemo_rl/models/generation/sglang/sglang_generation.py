@@ -119,6 +119,10 @@ class SGLangGeneration(GenerationInterface):
             # Explicitly pass CUDA_VISIBLE_DEVICES to workers via env_vars
             # This ensures all workers see the same global value, even though
             env_vars["CUDA_VISIBLE_DEVICES"] = global_cvd
+        for key in ("PATH", "RUSTUP_HOME", "CARGO_HOME", "PROTOC"):
+            value = os.environ.get(key, None)
+            if value:
+                env_vars[key] = value
 
         # Allocate bundles for each server
         # Each server gets consecutive bundles

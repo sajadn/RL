@@ -82,6 +82,15 @@ def create_local_venv(
 
     # Execute the command with the virtual environment
     env = os.environ.copy()
+    path_entries = []
+    cargo_home = env.get("CARGO_HOME")
+    if cargo_home:
+        path_entries.append(os.path.join(cargo_home, "bin"))
+    protoc = env.get("PROTOC")
+    if protoc:
+        path_entries.append(os.path.dirname(protoc))
+    if path_entries:
+        env["PATH"] = os.pathsep.join([*path_entries, env.get("PATH", "")])
     # NOTE: UV_PROJECT_ENVIRONMENT is appropriate here only b/c there should only be
     #  one call to this in the driver. It is not safe to use this in a multi-process
     #  context.
@@ -99,75 +108,37 @@ def create_local_venv(
 
     # Return the path to the python executable in the virtual environment
     python_path = os.path.join(venv_path, "bin", "python")
-    if "SGLangGenerationWorker" in venv_name:
-        sglang_source = os.environ.get("NEMO_RL_SGLANG_SOURCE")
-        if sglang_source:
-            subprocess.run(
-                [
-                    "uv",
-                    "pip",
-                    "install",
-                    "--python",
-                    python_path,
-                    "--no-deps",
-                    "--reinstall",
-                    sglang_source,
-                ],
-                env=env,
-                check=True,
-            )
-
-        sglang_flashinfer_specs = os.environ.get(
-            "NEMO_RL_SGLANG_FLASHINFER_SPECS",
-            "flashinfer_python==0.6.7.post3 flashinfer_cubin==0.6.7.post3",
+    sglang_kernel_source = os.environ.get("NEMO_RL_SGLANG_KERNEL_SOURCE")
+    if sglang_kernel_source and "SGLangGenerationWorker" in venv_name:
+        subprocess.run(
+            [
+                "uv",
+                "pip",
+                "install",
+                "--python",
+                python_path,
+                "--reinstall",
+                "--no-build-isolation",
+                sglang_kernel_source,
+            ],
+            env=env,
+            check=True,
         )
-        if sglang_flashinfer_specs:
-            subprocess.run(
-                [
-                    python_path,
-                    "-m",
-                    "pip",
-                    "install",
-                    "--no-deps",
-                    "--force-reinstall",
-                    *shlex.split(sglang_flashinfer_specs),
-                ],
-                env=env,
-                check=True,
-            )
-
-        sglang_kernel_source = os.environ.get("NEMO_RL_SGLANG_KERNEL_SOURCE")
-        if sglang_kernel_source:
-            if sglang_kernel_source.endswith(".whl"):
-                subprocess.run(
-                    [
-                        python_path,
-                        "-m",
-                        "pip",
-                        "install",
-                        "--no-deps",
-                        "--force-reinstall",
-                        sglang_kernel_source,
-                    ],
-                    env=env,
-                    check=True,
-                )
-            else:
-                subprocess.run(
-                    [
-                        "uv",
-                        "pip",
-                        "install",
-                        "--python",
-                        python_path,
-                        "--no-deps",
-                        "--reinstall",
-                        "--no-build-isolation",
-                        sglang_kernel_source,
-                    ],
-                    env=env,
-                    check=True,
-                )
+    flashinfer_specs = os.environ.get("NEMO_RL_SGLANG_FLASHINFER_SPECS")
+    if flashinfer_specs and "SGLangGenerationWorker" in venv_name:
+        subprocess.run(
+            [
+                "uv",
+                "pip",
+                "install",
+                "--python",
+                python_path,
+                "--reinstall",
+                *shlex.split(flashinfer_specs),
+            ],
+            env=env,
+            check=True,
+        )
     return python_path
 
 
@@ -237,8 +208,9 @@ def create_local_venv_on_each_node(py_executable: str, venv_name: str):
 
     force_rebuild = os.environ.get("NRL_FORCE_REBUILD_VENVS", "false").lower() == "true"
     # Launch one actor per node
+    runtime_env = {"env_vars": dict(os.environ)}
     actors = [
-        _env_builder.options(placement_group=pg).remote(
+        _env_builder.options(placement_group=pg, runtime_env=runtime_env).remote(
             py_executable, venv_name, i, force_rebuild
         )
         for i, _ in enumerate(nodes)

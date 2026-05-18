@@ -45,6 +45,11 @@ WANDB_PROJECT="${WANDB_PROJECT:-diffusion_rl}"
 WANDB_RUN_NAME="${WANDB_RUN_NAME:-${RUN_NAME}}"
 WANDB_API_KEY_FILE="${WANDB_API_KEY_FILE:-/home/snorouzi/wandb_api_key.txt}"
 TENSORBOARD_ENABLED="${TENSORBOARD_ENABLED:-false}"
+EXTRA_GRPO_OVERRIDES="${EXTRA_GRPO_OVERRIDES:-}"
+EXTRA_GRPO_ARGS=()
+if [[ -n "${EXTRA_GRPO_OVERRIDES}" ]]; then
+  read -r -a EXTRA_GRPO_ARGS <<< "${EXTRA_GRPO_OVERRIDES}"
+fi
 
 mkdir -p "${RUNDIR}"
 if [[ "${RESET_CHECKPOINTS}" == "1" ]]; then
@@ -126,4 +131,5 @@ uv run --extra mcore --with soundfile==0.13.1 --with onnx==1.19.1 python example
   policy.generation.vllm_cfg.enforce_eager=true \
   "policy.megatron_cfg.env_vars={PYTHONPATH:${MEGATRON_PATCH_DIR}}" \
   "data.max_input_seq_length=${MAX_TOTAL_SEQUENCE_LENGTH}" \
+  "${EXTRA_GRPO_ARGS[@]}" \
   2>&1 | tee "${RUNDIR}/run.log"
