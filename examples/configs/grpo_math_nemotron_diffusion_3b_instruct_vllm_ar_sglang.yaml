@@ -1,0 +1,120 @@
+# GRPO on the Ministral3ForCausalLM `-vllm-ar` Instruct checkpoint.
+#
+# This matches the successful grpo_ab_vllm_ar_sitecustomize run: SGLang
+# default AR rollout generation with Megatron Ministral3ForCausalLM
+# policy/logprob computation registered through the runtime sitecustomize patch.
+defaults: "grpo_math_1B_megatron.yaml"
+
+runtime_env:
+  launcher:
+    checkpoint_dir: "/lustre/fsw/portfolios/coreai/users/snorouzi/runs/diffusion_rl/ministral3_ar/checkpoints"
+    log_dir: "/tmp/ministral3_ar"
+    reset_checkpoints: true
+    reset_log_dir: true
+  env_vars:
+    UV_PROJECT_ENVIRONMENT: "/lustre/fsw/portfolios/coreai/users/snorouzi/nemorl_uv_envs/diffusion_RL_RL_mcore"
+    UV_CACHE_DIR: "/lustre/fsw/portfolios/coreai/users/snorouzi/uv_cache"
+    NRL_MEGATRON_CHECKPOINT_DIR: "/lustre/fsw/portfolios/coreai/users/snorouzi/nemo_rl_megatron_ckpts"
+    MEGATRON_CONFIG_LOCK_DIR: "/lustre/fsw/portfolios/coreai/users/snorouzi/hf_home/megatron_config_locks"
+    HF_HOME: "/lustre/fsw/portfolios/coreai/users/snorouzi/hf_home"
+    HF_DATASETS_CACHE: "/lustre/fsw/portfolios/coreai/users/snorouzi/hf_home/datasets"
+    TRANSFORMERS_CACHE: "/lustre/fsw/portfolios/coreai/users/snorouzi/hf_home/transformers"
+    HOME: "/lustre/fsw/portfolios/coreai/users/snorouzi/container_home"
+    WANDB_MODE: "online"
+    TOKENIZERS_PARALLELISM: "false"
+    NRL_IGNORE_VERSION_MISMATCH: "1"
+    RAY_raylet_start_wait_time_s: "120"
+    NRL_REFIT_BUFFER_MEMORY_RATIO: "0.3"
+    SGLANG_SOURCE_PATH: "/home/snorouzi/code/sglang-nemotron-dllm-lora-eval/python"
+    NEMO_RL_SGLANG_KERNEL_SOURCE: "/lustre/fsw/portfolios/coreai/users/snorouzi/wheels/sglang_kernel_torch210_cu129_py313/sglang_kernel-0.4.1-cp310-abi3-linux_x86_64.whl"
+    NEMO_RL_SGLANG_FLASHINFER_SPECS: "flashinfer_python==0.6.7.post3 flashinfer_cubin==0.6.7.post3"
+  secret_files:
+    HF_TOKEN: "/home/snorouzi/hf_token.txt"
+    HF_HUB_TOKEN: "/home/snorouzi/hf_token.txt"
+    HUGGING_FACE_HUB_TOKEN: "/home/snorouzi/hf_token.txt"
+    WANDB_API_KEY: "/home/snorouzi/wandb_api_key.txt"
+  policy_worker_pythonpath: "/lustre/fsw/portfolios/coreai/users/snorouzi/nemorl_runtime_patches:/home/snorouzi/code/Megatron-Bridge/src:/lustre/fsw/portfolios/coreai/users/snorouzi/hf_home/modules"
+
+grpo:
+  max_num_steps: 5000
+  max_num_epochs: 1
+  num_prompts_per_step: 8
+  num_generations_per_prompt: 8
+  val_at_start: false
+  val_at_end: true
+  val_period: 100
+  max_val_samples: 128
+  val_batch_size: 128
+
+checkpointing:
+  enabled: true
+  checkpoint_dir: ${runtime_env.launcher.checkpoint_dir}
+  save_period: 100
+  save_optimizer: true
+  save_consolidated: false
+
+policy:
+  model_name: "/lustre/fsw/portfolios/coreai/users/snorouzi/checkpoints/Nemotron-Diffusion-Exp-Ministral-3B-Instruct-vllm-ar"
+  tokenizer:
+    name: ${policy.model_name}
+  train_global_batch_size: 64
+  train_micro_batch_size: 8
+  generation_batch_size: 32
+  logprob_batch_size: 8
+  max_total_sequence_length: 640
+  hf_config_overrides:
+    seq_length: 640
+
+  sequence_packing:
+    enabled: false
+
+  generation:
+    backend: "sglang"
+    max_new_tokens: 256
+    temperature: 1.0
+    top_p: 1.0
+    top_k: null
+    stop_token_ids: null
+    stop_strings: null
+    sglang_cfg:
+      model_path: ${policy.model_name}
+      gpus_per_server: 1
+      dtype: ${policy.precision}
+      context_length: ${policy.max_total_sequence_length}
+      allow_auto_truncate: true
+      enable_memory_saver: false
+      dp_size: 1
+      pp_size: 1
+      ep_size: 1
+      max_running_requests: 32
+      mem_fraction_static: 0.4
+      skip_server_warmup: true
+      disable_cuda_graph: true
+      disable_piecewise_cuda_graph: true
+      attention_backend: "flashinfer"
+      dllm_algorithm: null
+      dllm_algorithm_config: null
+
+  megatron_cfg:
+    converter_type: "Ministral3ForCausalLM"
+    diffusion_attention_mode: "inference_causal"
+    optimizer:
+      lr: 3.0e-7
+      min_lr: 3.0e-8
+    scheduler:
+      lr_warmup_init: 3.0e-8
+
+data:
+  max_input_seq_length: 640
+
+logger:
+  log_dir: ${runtime_env.launcher.log_dir}
+  wandb_enabled: true
+  tensorboard_enabled: false
+  wandb:
+    project: "diffusion_rl"
+    name: "grpo-nemotron-diffusion-3b-instruct-vllm-ar-sglang"
+
+cluster:
+  gpus_per_node: 8
+  num_nodes: 1

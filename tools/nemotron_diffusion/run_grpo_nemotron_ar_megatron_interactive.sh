@@ -16,6 +16,8 @@ REPO_DIR="${REPO_DIR:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 
 RUN_ROOT="${RUN_ROOT:-/lustre/fsw/portfolios/coreai/users/snorouzi/runs/diffusion_rl}"
 RUNDIR="${RUNDIR:-${RUN_ROOT}/${RUN_NAME}}"
+RUN_CHECKPOINT_DIR="${RUNDIR}/checkpoints"
+RUN_LOG_DIR="${RUNDIR}/logs"
 
 EXTRA_GRPO_OVERRIDES="${EXTRA_GRPO_OVERRIDES:-}"
 
@@ -27,6 +29,9 @@ eval "$(python3 tools/nemotron_diffusion/extract_runtime_env.py "${CONFIG}")"
 : "${RESET_CHECKPOINTS:?runtime_env.launcher.reset_checkpoints must be set in ${CONFIG}.}"
 : "${RESET_LOG_DIR:?runtime_env.launcher.reset_log_dir must be set in ${CONFIG}.}"
 
+CHECKPOINT_DIR="${RUN_CHECKPOINT_DIR}"
+LOG_DIR="${RUN_LOG_DIR}"
+
 mkdir -p "${RUNDIR}"
 if [[ "${RESET_CHECKPOINTS}" == "1" ]]; then
   rm -rf "${CHECKPOINT_DIR}"
@@ -34,6 +39,7 @@ fi
 if [[ "${RESET_LOG_DIR}" == "1" ]]; then
   rm -rf "${LOG_DIR}"
 fi
+mkdir -p "${RUNDIR}" "${LOG_DIR}"
 
 # Important: do not expose the Megatron bridge patch to the Ray driver.
 # Pass it only to Megatron policy workers via policy.megatron_cfg.env_vars.
@@ -44,6 +50,10 @@ fi
 
 GRPO_ARGS=(
   --config "${CONFIG}"
+  "runtime_env.launcher.checkpoint_dir=${CHECKPOINT_DIR}"
+  "runtime_env.launcher.log_dir=${LOG_DIR}"
+  "checkpointing.checkpoint_dir=${CHECKPOINT_DIR}"
+  "logger.log_dir=${LOG_DIR}"
 )
 
 if [[ -n "${MEGATRON_PATCH_DIR:-}" ]]; then
