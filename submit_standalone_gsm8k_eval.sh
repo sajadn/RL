@@ -7,6 +7,7 @@ set -euo pipefail
 # Common usage:
 #   ALG=FastDiffuser BS=16 TEMP=0 TAG=my_eval ./submit_standalone_gsm8k_eval.sh
 #   ALG=LinearSpec   BS=16 TEMP=0.0 TAG=my_greedy_ls_b16 ./submit_standalone_gsm8k_eval.sh
+#   ALG=AR           BS=16 TEMP=0.0 TAG=my_ar_mode ./submit_standalone_gsm8k_eval.sh
 #   BENCHMARK=aime2024 ALG=FastDiffuser BS=16 TEMP=0 TAG=my_aime24 ./submit_standalone_gsm8k_eval.sh
 #   BENCHMARK=aime2025 ALG=FastDiffuser BS=16 TEMP=0 TAG=my_aime25 ./submit_standalone_gsm8k_eval.sh
 
@@ -17,7 +18,7 @@ GPUS_PER_NODE=${GPUS_PER_NODE:-1}
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 BENCHMARK=${BENCHMARK:-gsm8k}        # gsm8k, aime2024/aime24, or aime2025/aime25
-ALG=${ALG:-FastDiffuser}        # FastDiffuser or LinearSpec
+ALG=${ALG:-FastDiffuser}        # FastDiffuser, LinearSpec, or AR
 BS=${BS:-16}                    # diffusion block size
 TEMP=${TEMP:-0}                 # paper-style AIME greedy decoding uses temperature 0
 MAX_STEPS=${MAX_STEPS:-8192}
@@ -29,7 +30,7 @@ TOP_P=${TOP_P:-1.0}
 TOP_K=${TOP_K:--1}
 CONCURRENT=${CONCURRENT:-1}
 GENERATION_API=${GENERATION_API:-generate}
-MAX_RUNNING_REQUESTS=${MAX_RUNNING_REQUESTS:-1}
+MAX_RUNNING_REQUESTS=${MAX_RUNNING_REQUESTS:-}
 MAX_TOTAL_TOKENS=${MAX_TOTAL_TOKENS:-20000}
 MEM_FRACTION_STATIC=${MEM_FRACTION_STATIC:-0.55}
 ATTENTION_BACKEND=${ATTENTION_BACKEND:-flashinfer}
@@ -49,8 +50,47 @@ SGLANG_REPO=${SGLANG_REPO:-/home/snorouzi/code/sglang-nemotron-dllm-a652eb48}
 SGLANG_COMMIT=${SGLANG_COMMIT:-$(git -C "$SGLANG_REPO" rev-parse HEAD)}
 PROMPT_FILE=${PROMPT_FILE:-$WORKDIR/examples/prompts/cot.txt}
 
-if [[ "$ALG" != "FastDiffuser" && "$ALG" != "LinearSpec" ]]; then
-  echo "ALG must be FastDiffuser or LinearSpec, got: $ALG" >&2
+usage() {
+  cat <<EOF
+Usage: $0 [--concurrency N] [--max-running-requests N]
+
+Options:
+  --concurrency, --concurrent N      Number of parallel client generation requests.
+  --max-running-requests N          SGLang server max running requests. Defaults to concurrency.
+  -h, --help                        Show this help.
+
+All existing environment-variable overrides are still supported.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --concurrency|--concurrent)
+      [[ $# -ge 2 ]] || { echo "$1 requires a value" >&2; exit 2; }
+      CONCURRENT="$2"
+      shift 2
+      ;;
+    --max-running-requests)
+      [[ $# -ge 2 ]] || { echo "$1 requires a value" >&2; exit 2; }
+      MAX_RUNNING_REQUESTS="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+MAX_RUNNING_REQUESTS=${MAX_RUNNING_REQUESTS:-$CONCURRENT}
+
+if [[ "$ALG" != "FastDiffuser" && "$ALG" != "LinearSpec" && "$ALG" != "AR" ]]; then
+  echo "ALG must be FastDiffuser, LinearSpec, or AR, got: $ALG" >&2
   exit 2
 fi
 if [[ "$GENERATION_API" != "generate" && "$GENERATION_API" != "chat_completions" ]]; then
@@ -108,6 +148,8 @@ echo "TEMP=$TEMP"
 echo "MAX_STEPS=$MAX_STEPS"
 echo "MAX_NEW_TOKENS=$MAX_NEW_TOKENS"
 echo "GENERATION_API=$GENERATION_API"
+echo "CONCURRENT=$CONCURRENT"
+echo "MAX_RUNNING_REQUESTS=$MAX_RUNNING_REQUESTS"
 echo "NUM_SAMPLES=$NUM_SAMPLES"
 echo "SHARD_DP_SIZE=$SHARD_DP_SIZE"
 echo "SHARD_RANK=$SHARD_RANK"
@@ -162,4 +204,4 @@ SBATCH
 
 echo "$JOBID" | tee "$OUTDIR/submit.log"
 echo "OUTDIR=$OUTDIR"
-echo "BENCHMARK=$BENCHMARK ALG=$ALG BS=$BS TEMP=$TEMP SHARD=$SHARD_RANK/$SHARD_DP_SIZE"
+echo "BENCHMARK=$BENCHMARK ALG=$ALG BS=$BS TEMP=$TEMP CONCURRENT=$CONCURRENT MAX_RUNNING_REQUESTS=$MAX_RUNNING_REQUESTS SHARD=$SHARD_RANK/$SHARD_DP_SIZE"
