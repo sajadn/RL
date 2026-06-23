@@ -38,11 +38,12 @@ per-level logprobs back to NemoRL's ``[N, S]`` layout.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any
 
 import torch
 
 from nemo_rl.algorithms.diffu_grpo_logprobs import (
+    RevealLevelSchedule,
     build_fully_masked_completion_batch,
     build_fully_masked_completion_loss_batch,
 )
@@ -186,51 +187,27 @@ def make_reveal_level_view(
     return view
 
 
-class BlockJustGRPORevealSchedule(BatchedDataDict[Any]):
+class BlockJustGRPORevealSchedule(RevealLevelSchedule):
     """The reveal-level schedule, presented to Megatron as a microbatch source.
 
-    Holds the fully-masked ``base`` (N samples) and emits the model inputs for
-    each reveal level in turn: for level ``j`` it reveals the first ``j`` tokens of
-    every block, then microbatches the N samples the *standard* way (delegating to
-    ``BatchedDataDict.make_microbatch_iterator``). The only block-reveal-specific
-    structure is the outer loop over reveal levels; sample microbatching is
-    ordinary.
-
-    Used as the training "batch" so a single ``megatron_forward_backward``
-    accumulates gradients across all reveal levels before one optimizer step. Only
-    one reveal level is materialized at a time.
+    For level ``j`` it reveals the first ``j`` tokens of every block (the rest stay
+    MASK) via ``make_reveal_level_view``; sample microbatching is the standard
+    ``BatchedDataDict`` mechanism (see ``RevealLevelSchedule``). Used as the
+    training "batch" so a single ``megatron_forward_backward`` accumulates gradients
+    across all reveal levels before one optimizer step.
     """
 
     def configure(
         self, *, num_levels: int, block_size: int, harvest_keys: tuple[str, ...]
     ) -> "BlockJustGRPORevealSchedule":
-        self._br_num_levels = int(num_levels)
+        self._configure_levels(num_levels=num_levels, harvest_keys=harvest_keys)
         self._br_block_size = int(block_size)
-        self._br_harvest_keys = tuple(harvest_keys)
         return self
 
-    def _sample_count(self) -> int:
-        if not self.data:
-            return 0
-        value = self.data[next(iter(self.data))]
-        return value.shape[0] if torch.is_tensor(value) else len(value)
-
-    @property
-    def size(self) -> int:
-        # Total microbatch-equivalents Megatron will see: one full sample batch
-        # per reveal level. get_microbatch_iterator divides this by the microbatch
-        # size to get num_microbatches.
-        return self._br_num_levels * self._sample_count()
-
-    def make_microbatch_iterator(
-        self, microbatch_size: int
-    ) -> Iterator[BatchedDataDict[Any]]:
-        for level in range(self._br_num_levels):
-            level_view = make_reveal_level_view(
-                self, level, self._br_block_size, self._br_harvest_keys
-            )
-            # Sample microbatching is the standard BatchedDataDict mechanism.
-            yield from level_view.make_microbatch_iterator(microbatch_size)
+    def _make_level_view(self, level: int) -> BatchedDataDict[Any]:
+        return make_reveal_level_view(
+            self, level, self._br_block_size, self._rl_harvest_keys
+        )
 
 
 def scatter_block_reveal_logprobs(
