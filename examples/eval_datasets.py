@@ -9,6 +9,12 @@ import random
 from pathlib import Path
 
 
+DEFAULT_NEMO_SKILLS_AIME_DATA_DIR = Path(
+    "/lustre/fs1/portfolios/coreai/projects/coreai_dlalgo_genai/users/snorouzi/"
+    "eval_data/nemo_skills_aime"
+)
+
+
 def extract_hash_answer(text: str) -> str | None:
     if "####" not in text:
         return None
@@ -61,17 +67,16 @@ def load_nemo_skills_aime(variant: str) -> list[dict[str, str]] | None:
     if dataset_name is None:
         raise ValueError(f"Unsupported AIME variant: {variant}")
 
-    local_data_path = (
-        Path(__file__).resolve().parent / "data" / f"nemo_skills_{dataset_name}_test.jsonl"
-    )
-    if local_data_path.exists():
-        return load_nemo_skills_aime_jsonl(local_data_path, dataset_name)
-
+    data_roots = []
     explicit_data_dir = os.environ.get("NEMO_SKILLS_AIME_DATA_DIR")
     if explicit_data_dir:
-        explicit_data_path = Path(explicit_data_dir) / f"{dataset_name}" / "test.jsonl"
-        if explicit_data_path.exists():
-            return load_nemo_skills_aime_jsonl(explicit_data_path, dataset_name)
+        data_roots.append(Path(explicit_data_dir))
+    data_roots.append(DEFAULT_NEMO_SKILLS_AIME_DATA_DIR)
+
+    for data_root in data_roots:
+        data_path = data_root / dataset_name / "test.jsonl"
+        if data_path.exists():
+            return load_nemo_skills_aime_jsonl(data_path, dataset_name)
 
     packaged_data_path = (
         Path("/opt/nemo_rl_venv/lib/python3.12/site-packages")
