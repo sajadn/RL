@@ -176,10 +176,11 @@ run_training() {
 
   uv run \
     "${reinstall_args[@]}" \
-    --extra mcore \
+    --extra mcore ${NEMO_GYM_UV_EXTRA:-} \
     --with onnx==1.19.1 \
     python "${RUN_SCRIPT:-examples/run_grpo.py}" \
     --config "${CONFIG}" \
+    checkpointing.enabled=true \
     "checkpointing.checkpoint_dir=${CHECKPOINT_DIR}" \
     checkpointing.save_optimizer=true \
     checkpointing.save_consolidated=false \
