@@ -16,6 +16,7 @@ import gc
 import os
 import time
 import warnings
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from typing import Any, NotRequired, Optional, TypedDict, TypeVar, cast
@@ -35,10 +36,12 @@ from nemo_rl.algorithms.advantage_estimator import (
 from nemo_rl.algorithms.block_just_grpo_logprobs import require_generation_entropy
 from nemo_rl.algorithms.coupled_grpo_logprobs import maybe_set_coupled_grpo_seed
 from nemo_rl.algorithms.trace_grpo_logprobs import maybe_set_trace_level_seed
+from nemo_rl.algorithms.hybrid_ar_diffusion import maybe_set_hybrid_mask_seed
 from nemo_rl.algorithms.loss import (
     ClippedPGLossConfig,
     ClippedPGLossDataDict,
     ClippedPGLossFn,
+    HybridARDiffusionLossFn,
 )
 from nemo_rl.algorithms.loss.interfaces import LossFunction
 from nemo_rl.algorithms.reward_functions import (
@@ -557,7 +560,33 @@ def setup(
     # ==========================
     #        Loss Function
     # ==========================
-    loss_fn = ClippedPGLossFn(loss_config)
+    # The hybrid AR+diffusion estimator adds a masked cross-entropy term on the
+    # noisy half of the layout alongside the usual clipped policy gradient, so it
+    # needs its own loss. Selecting on the estimator type keeps the two halves
+    # from drifting apart: the batch layout and the loss must agree.
+    _estimation_cfg = master_config["policy"].get("logprob_estimation", None)
+    if _estimation_cfg is not None and _estimation_cfg["type"] == "hybrid_ar_diffusion":
+        loss_fn = HybridARDiffusionLossFn(
+            {
+                "ratio_clip_min": loss_config["ratio_clip_min"],
+                "ratio_clip_max": loss_config["ratio_clip_max"],
+                "ratio_clip_c": loss_config["ratio_clip_c"],
+                "token_level_loss": loss_config["token_level_loss"],
+                "ce_loss_weight": _estimation_cfg["ce_loss_weight"],
+                "pg_loss_weight": _estimation_cfg.get("pg_loss_weight", None),
+                "elbo_weight_ce": _estimation_cfg.get("elbo_weight_ce", None),
+            }
+        )
+        assert loss_config["reference_policy_kl_penalty"] == 0, (
+            "hybrid_ar_diffusion does not implement the reference-policy KL "
+            "penalty; set loss_fn.reference_policy_kl_penalty=0"
+        )
+        assert not loss_config["use_importance_sampling_correction"], (
+            "hybrid_ar_diffusion does not implement the generation importance-"
+            "sampling correction; set loss_fn.use_importance_sampling_correction=false"
+        )
+    else:
+        loss_fn = ClippedPGLossFn(loss_config)
 
     # Validate force_on_policy_ratio
     if loss_config.get("force_on_policy_ratio", False):
@@ -1727,6 +1756,16 @@ def grpo_train(
     val_at_start = master_config["grpo"]["val_at_start"]
     val_at_end = master_config["grpo"]["val_at_end"]
     val_period = master_config["grpo"]["val_period"]
+    # With a dedicated validation group, validation normally decodes only on it.
+    # This additionally validates on the rollout engines, so a hybrid run can
+    # report both decoding modes (e.g. diffusion-mode val alongside AR-mode val)
+    # and see whether one improves at the other's expense.
+    val_include_rollout_mode = bool(
+        master_config["policy"]["generation"].get("val_include_rollout_mode", False)
+    ) and val_policy_generation is not None
+    # Keep the rollout mode under the familiar "validation" prefix and give the
+    # dedicated group its own, so existing dashboards keep working.
+    val_group_prefix = "validation_dllm" if val_include_rollout_mode else "validation"
     num_updates_per_rollout = int(
         master_config["grpo"].get("num_updates_per_rollout", 1) or 1
     )  # lambda: optimizer passes per rollout batch
@@ -1777,8 +1816,32 @@ def grpo_train(
             # rollout-group refit comes next with no training in between.
             # Onload the weights again to restore that invariant.
             policy.prepare_for_lp_inference()
-        logger.log_metrics(val_metrics, current_step, prefix="validation")
-        logger.log_metrics(validation_timings, current_step, prefix="timing/validation")
+        logger.log_metrics(val_metrics, current_step, prefix=val_group_prefix)
+        logger.log_metrics(
+            validation_timings, current_step, prefix=f"timing/{val_group_prefix}"
+        )
+
+        if val_include_rollout_mode:
+            # Second pass on the rollout engines to report the other decoding
+            # mode. Refit them now rather than lazily so both curves reflect the
+            # same weights.
+            refit_policy_generation(policy, policy_generation, colocated_inference)
+            POLICY_GENERATION_STALE = False
+            rollout_val_metrics, rollout_val_timings = validate(
+                policy_generation,
+                val_dataloader,
+                tokenizer,
+                val_task_to_env,
+                step=0,
+                master_config=master_config,
+                logger=logger,
+                generation_config=None,
+            )
+            policy_generation.finish_generation()
+            logger.log_metrics(rollout_val_metrics, current_step, prefix="validation")
+            logger.log_metrics(
+                rollout_val_timings, current_step, prefix="timing/validation"
+            )
 
     if master_config["data"]["use_multiple_dataloader"]:
         warnings.warn(
@@ -2157,6 +2220,13 @@ def grpo_train(
                     maybe_set_trace_level_seed(
                         train_data, master_config["policy"], total_steps
                     )
+                    # Hybrid AR+diffusion: attach this step's noisy-mask seed
+                    # (no-op for other estimators). Unlike the coupled seed this
+                    # is for reproducibility only -- the clean half that feeds
+                    # prev_logprobs does not depend on the mask.
+                    maybe_set_hybrid_mask_seed(
+                        train_data, master_config["policy"], total_steps
+                    )
                     logprob_data = BatchedDataDict[ClippedPGLossDataDict](
                         {
                             "input_ids": train_data["input_ids"],
@@ -2173,6 +2243,10 @@ def grpo_train(
                     if "coupled_grpo_seed" in train_data:
                         logprob_data["coupled_grpo_seed"] = train_data[
                             "coupled_grpo_seed"
+                        ]
+                    if "hybrid_mask_seed" in train_data:
+                        logprob_data["hybrid_mask_seed"] = train_data[
+                            "hybrid_mask_seed"
                         ]
                     # BlockJustGRPO-Fast builds its entropy-sparsified level selection
                     # from generation_entropy in the logprob path too, so thread it into
@@ -2409,11 +2483,42 @@ def grpo_train(
                         # next rollout refit (see the val_at_start site).
                         policy.prepare_for_lp_inference()
                     logger.log_metrics(
-                        validation_timings, total_steps + 1, prefix="timing/validation"
+                        validation_timings,
+                        total_steps + 1,
+                        prefix=f"timing/{val_group_prefix}",
                     )
                     logger.log_metrics(
-                        val_metrics, total_steps + 1, prefix="validation"
+                        val_metrics, total_steps + 1, prefix=val_group_prefix
                     )
+
+                    if val_include_rollout_mode:
+                        # Second pass on the rollout engines (see val_at_start).
+                        refit_policy_generation(
+                            policy,
+                            policy_generation,
+                            colocated_inference,
+                            kv_scales=kv_scales_cache if sync_kv_scales else None,
+                        )
+                        POLICY_GENERATION_STALE = False
+                        rollout_val_metrics, rollout_val_timings = validate(
+                            policy_generation,
+                            val_dataloader,
+                            tokenizer,
+                            val_task_to_env,
+                            step=total_steps + 1,
+                            master_config=master_config,
+                            logger=logger,
+                            generation_config=None,
+                        )
+                        policy_generation.finish_generation()
+                        logger.log_metrics(
+                            rollout_val_timings,
+                            total_steps + 1,
+                            prefix="timing/validation",
+                        )
+                        logger.log_metrics(
+                            rollout_val_metrics, total_steps + 1, prefix="validation"
+                        )
 
                 # Get flat advantages and token mask for masked metrics computation
                 flat_advantages = train_data["advantages"]
@@ -2632,7 +2737,8 @@ def grpo_train(
                 reduction_op="sum"
             )  # type: ignore
             # track example with high token mult prob error above 1.05
-            if metrics["token_mult_prob_error"] > 1.05:
+            # (.get: not every loss function emits this diagnostic)
+            if metrics.get("token_mult_prob_error", 0.0) > 1.05:
                 logger.log_plot_token_mult_prob_error(
                     {
                         "prompt_lengths": repeated_batch["length"],
@@ -2677,7 +2783,15 @@ def grpo_train(
             print(f"  • Loss: {metrics['loss']:.4f}")
             if "draft_loss" in metrics:
                 print(f"  • Draft Loss: {metrics['draft_loss']:.4f}")
-            print(f"  • Generation KL Error: {metrics['gen_kl_error']:.4f}")
+            # The hybrid AR+diffusion estimator reports its two terms separately,
+            # and -- having no generation importance-sampling correction -- emits
+            # no gen_kl_error at all.
+            if "pg_loss" in metrics:
+                print(f"  • PG Loss: {metrics['pg_loss']:.4f}")
+            if "ce_loss" in metrics:
+                print(f"  • CE Loss: {metrics['ce_loss']:.4f}")
+            if "gen_kl_error" in metrics:
+                print(f"  • Generation KL Error: {metrics['gen_kl_error']:.4f}")
             if master_config["grpo"]["use_dynamic_sampling"]:
                 print(f"  • Avg Filtered Reward: {np.mean(rewards.numpy()):.4f}")
                 print(
@@ -2799,6 +2913,14 @@ def validate(
         total_rewards = []
         total_lengths = []
         all_message_logs = []  # Collect all message logs
+        # Per-agent rewards accumulated across ALL validation batches. Gym's own
+        # `{agent}/reward/mean` cannot be used for this: it is recomputed per
+        # batch and `additional_metrics_to_report` is overwritten each
+        # iteration, so only the final batch would survive. Accumulating the raw
+        # rewards here keeps every batch and is what lets one validation file
+        # holding several datasets (each tagged with its own agent name) report
+        # a separate accuracy per dataset.
+        agent_rewards: dict[str, list[float]] = defaultdict(list)
 
         max_batches = (
             master_config["grpo"]["max_val_samples"]
@@ -2835,6 +2957,16 @@ def validate(
                 f"(will restore: {restore_dllm_overrides})",
                 flush=True,
             )
+        # Zero the diffusion decode counters so TPF below covers this
+        # validation pass only, not everything decoded since engine start.
+        tpf_supported = hasattr(policy_generation, "get_diffusion_tpf_stats")
+        if tpf_supported:
+            try:
+                policy_generation.get_diffusion_tpf_stats(reset=True)
+            except Exception as e:
+                print(f"  ⚠️ Could not reset diffusion TPF counters: {e}", flush=True)
+                tpf_supported = False
+
         pending_exc = None
         try:
             for batch_idx, val_batch in enumerate(val_dataloader):
@@ -2886,8 +3018,18 @@ def validate(
                         greedy=False,
                     )
 
-                total_rewards.extend(val_batch["total_reward"].tolist())
+                batch_rewards = val_batch["total_reward"].tolist()
+                total_rewards.extend(batch_rewards)
                 total_lengths.append(gen_metrics["mean_gen_tokens_per_sample"])
+
+                # Bucket this batch's rewards by agent so multi-dataset
+                # validation files stay separable (see agent_rewards above).
+                # Only the NeMo-Gym path carries agent_ref.
+                if "agent_ref" in val_batch:
+                    for agent_ref, reward in zip(
+                        val_batch["agent_ref"], batch_rewards
+                    ):
+                        agent_rewards[agent_ref["name"]].append(reward)
 
                 # Collect message logs for later display
                 to_env = [
@@ -2939,6 +3081,43 @@ def validate(
             "avg_length": avg_length,
             **additional_metrics_to_report,
         }
+
+        # Diffusion decode efficiency over this validation pass.
+        # TPF = committed tokens / denoising forwards. 1.0 means the decode
+        # committed one token per forward, i.e. no parallelism at all -- the
+        # degenerate case the even transfer schedule produces when
+        # max_denoising_steps == canvas_length.
+        if tpf_supported:
+            try:
+                tpf_stats = policy_generation.get_diffusion_tpf_stats(reset=False)
+            except Exception as e:
+                print(f"  ⚠️ Could not read diffusion TPF counters: {e}", flush=True)
+            else:
+                nfe = tpf_stats.get("nfe", 0)
+                committed = tpf_stats.get("committed_tokens", 0)
+                if nfe > 0:
+                    val_metrics["diffusion_tpf"] = committed / nfe
+                    val_metrics["diffusion_nfe"] = nfe
+                    val_metrics["diffusion_committed_tokens"] = committed
+                    print(
+                        f"    • Diffusion TPF: {committed / nfe:.4f} "
+                        f"({committed} tokens / {nfe} denoising forwards)"
+                    )
+
+        # Per-agent accuracy over every validation batch. Emitted after the
+        # Gym metrics so these win on key collision: `additional_metrics_to_report`
+        # holds only the last batch's `{agent}/reward/mean`, whereas these span
+        # the whole validation pass.
+        for agent_name, rewards in sorted(agent_rewards.items()):
+            val_metrics[f"{agent_name}/accuracy"] = sum(rewards) / len(rewards)
+            val_metrics[f"{agent_name}/count"] = len(rewards)
+        if agent_rewards:
+            print("    • Per-dataset accuracy:")
+            for agent_name, rewards in sorted(agent_rewards.items()):
+                print(
+                    f"        {agent_name:<28} "
+                    f"{sum(rewards) / len(rewards):.4f}  (n={len(rewards)})"
+                )
 
         # Print sample conversations only once at the end of validation
         try:
@@ -3490,6 +3669,12 @@ def async_grpo_train(
                     maybe_set_trace_level_seed(
                         train_data, master_config["policy"], step
                     )
+                    # Same for the hybrid estimator's noisy-mask seed; without it
+                    # the worker's fallback would reuse an all-zero seed, freezing
+                    # one mask realization across every row and every step.
+                    maybe_set_hybrid_mask_seed(
+                        train_data, master_config["policy"], step
+                    )
 
                 # Training phase (same as sync version)
                 print("▶ Preparing for logprob inference...")
@@ -3885,7 +4070,15 @@ def async_grpo_train(
             print(f"  • Loss: {metrics['loss']:.4f}")
             if "draft_loss" in metrics:
                 print(f"  • Draft Loss: {metrics['draft_loss']:.4f}")
-            print(f"  • Generation KL Error: {metrics['gen_kl_error']:.4f}")
+            # The hybrid AR+diffusion estimator reports its two terms separately,
+            # and -- having no generation importance-sampling correction -- emits
+            # no gen_kl_error at all.
+            if "pg_loss" in metrics:
+                print(f"  • PG Loss: {metrics['pg_loss']:.4f}")
+            if "ce_loss" in metrics:
+                print(f"  • CE Loss: {metrics['ce_loss']:.4f}")
+            if "gen_kl_error" in metrics:
+                print(f"  • Generation KL Error: {metrics['gen_kl_error']:.4f}")
             print(f"  • Avg Reward: {np.mean(rewards.numpy()):.4f}")
             print(f"  • Buffer Size: {buffer_size_current}")
             print(f"  • Avg Trajectory Age: {avg_trajectory_age:.2f} steps")

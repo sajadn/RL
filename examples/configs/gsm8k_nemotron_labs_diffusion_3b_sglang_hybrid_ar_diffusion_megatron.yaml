@@ -1,0 +1,74 @@
+# Hybrid AR + diffusion on Nemotron-Labs-Diffusion-3B, GSM8K train / GSM8K test.
+#
+# Smoke/debug scale counterpart of
+# deepscaler_nemotron_labs_diffusion_3b_sglang_hybrid_ar_diffusion_megatron.yaml.
+# Inherits the GSM8K AR root directly (1 node x 8 GPU, 1024 sequence budget,
+# max_new_tokens 750, ar_mode=true SGLang generation), so the only thing that
+# changes versus the AR GRPO baseline is the policy worker + the loss.
+#
+# One forward over the asymmetric [noisy | clean] layout produces both terms:
+#   clean half -> causal AR logits  -> GRPO clipped policy gradient (RL)
+#   noisy half -> randomly masked   -> masked cross-entropy (MDM, no RL)
+# loss = pg_loss + ce_loss_weight * ce_loss
+#
+# Batch sizes are halved from the AR root (16/32 -> 8/8): the [noisy | clean]
+# layout roughly doubles the scored sequence length, so the AR ceiling does not
+# carry over. Raise only after a clean memory smoke.
+defaults: "gsm8k_nemotron_labs_diffusion_3b_sglang_ar_megatron.yaml"
+
+policy:
+  worker_cls_fqn: "nemo_rl.models.policy.workers.hybrid_ar_diffusion_megatron_policy_worker.HybridARDiffusionMegatronPolicyWorker"
+
+  train_micro_batch_size: 8
+  logprob_batch_size: 8
+
+  # Aligns the noisy-side block padding and the asymmetric attention windows with
+  # the other diffusion runs, and reuses their HF->mcore conversion cache.
+  # Generation is AR and ignores it.
+  hf_config_overrides:
+    block_size: 16
+
+  logprob_estimation:
+    type: "hybrid_ar_diffusion"
+    mask_token_id: 100
+    # lambda on the CE term. Read pg_loss / ce_loss from the first logged steps
+    # and retune so the two land within an order of magnitude of each other --
+    # do not trust this starting value.
+    ce_loss_weight: 1.0
+    # Per-sample masking ratio t ~ U(min, max), bounded away from 0 and 1.
+    mask_ratio_min: 0.2
+    mask_ratio_max: 0.8
+    # Scale each sample's CE by 1/t. With the CE term normalized by the response
+    # token count this is an unbiased masked-diffusion ELBO per response token.
+    elbo_weight_ce: true
+    # Reproducibility only -- the clean half does not depend on the mask.
+    seed_base: 0
+    noisy_tail_mode: "mask"
+    exclude_mask_token_from_logits: true
+
+loss_fn:
+  # The hybrid loss implements neither the reference-policy KL penalty nor the
+  # generation importance-sampling correction; grpo.py asserts both are off.
+  reference_policy_kl_penalty: 0.0
+  use_importance_sampling_correction: false
+
+grpo:
+  skip_reference_policy_logprobs_calculation: true
+  # Short smoke run: validate early and often so a broken loss shows up fast.
+  val_period: 10
+  val_at_start: true
+  max_num_steps: 50
+
+checkpointing:
+  enabled: true
+  checkpoint_dir: "results/grpo-nemotron-diffusion-3b-hybrid-ar-diffusion-gsm8k-megatron"
+  save_period: 25
+
+logger:
+  log_dir: "logs/grpo-nemotron-diffusion-3b-hybrid-ar-diffusion-gsm8k-megatron-sglang"
+  wandb:
+    name: "grpo-nemotron-diffusion-3b-hybrid-ar-diffusion-gsm8k-megatron-sglang"
+
+cluster:
+  gpus_per_node: 8
+  num_nodes: 1

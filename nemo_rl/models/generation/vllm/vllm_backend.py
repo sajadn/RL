@@ -93,6 +93,47 @@ class VllmInternalWorkerExtension:
             return f"ipc:///tmp/{generation_group}-{device_id}.sock"
         return f"ipc:///tmp/{device_id}.sock"
 
+    def get_diffusion_tpf_stats(self, reset: bool = False) -> dict[str, int]:
+        """Read this worker's diffusion decode counters.
+
+        Returns zeros on engines that are not running a diffusion sampler
+        (the ``ar_mode`` rollout group), so the caller can sum across a mixed
+        set of workers without special-casing.
+        """
+        try:
+            from vllm.model_executor.models.nemotron_dllm import (
+                get_diffusion_tpf_stats,
+            )
+        except ImportError:
+            return {"nfe": 0, "committed_tokens": 0}
+
+        return get_diffusion_tpf_stats(reset=reset)
+
+    def get_zmq_address(self):
+        """Get the ZMQ address for the current device."""
+        return f"ipc:///tmp/{self.report_device_id()}.sock"
+
+    def close_zmq(self):
+        """Disconnect this worker from the policy's refit socket.
+
+        The policy binds one REQ socket per GPU and generation workers connect
+        to it as REP peers, rendezvousing on the device UUID alone. A REQ socket
+        round-robins across its connected peers, so if two generation groups
+        (e.g. AR rollout engines plus a diffusion-mode validation group) both
+        stay connected, the policy's weight chunks alternate between them and
+        both refits stall. Refits are serialized, so dropping the connection
+        when one finishes keeps exactly one peer attached at a time.
+
+        LINGER is raised before closing so the final ACK is flushed rather than
+        discarded.
+        """
+        if hasattr(self, "zmq_socket"):
+            self.zmq_socket.setsockopt(zmq.LINGER, 30000)
+            self.zmq_socket.close()
+            del self.zmq_socket
+            self.zmq_context.term()
+            del self.zmq_context
+
     def maybe_init_zmq(self):
         """Initialize the ZMQ socket if it doesn't exist."""
         if not hasattr(self, "zmq_socket"):
@@ -406,6 +447,10 @@ class VllmInternalWorkerExtension:
                 f"{traceback.format_exc()}"
             )
             return False
+        finally:
+            # Release the connection so a second generation group can refit
+            # without contending for the policy's REQ socket (see close_zmq).
+            self.close_zmq()
 
     @wrap_with_nvtx_name(
         "vllm_internal_worker_extension/update_weights_from_collective"

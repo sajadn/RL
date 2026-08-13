@@ -1,0 +1,138 @@
+defaults: "nemotron_labs_diffusion_3b_vllm_block_justgrpo_megatron_nemogym_qamathcode.yaml"
+
+# Hybrid AR + diffusion on NeMo-Gym qamathcode super-v3, as a controlled
+# comparison against the BlockJustGRPO run `nemogym_vllm_block_e2e` (400 steps).
+#
+# APPLES-TO-APPLES: everything below the algorithm is inherited unchanged from
+# the BlockJustGRPO gym config -- same Gym servers, same 6 simple_agents, same
+# super-v3 dataset, same reward path. The values pinned here match the wandb
+# config of run 0lrye5fm (the run that produced the 400-step curve), because
+# that run set several of them from the CLI rather than from YAML:
+#   max_total_sequence_length 1024, max_new_tokens 256,
+#   16 prompts x 8 generations = global batch 128,
+#   train_micro_batch_size 4, logprob_batch_size 4, generation_batch_size 8,
+#   lr 1e-6, context_parallel_size 1, make_sequence_length_divisible_by 4.
+#
+# WHAT DIFFERS (the experiment): the algorithm.
+#   BlockJustGRPO -> diffusion rollouts (leftmost), PG loss only.
+#   Hybrid        -> AR rollouts (ar_mode), loss = pg_loss + w * ce_loss over
+#                    the asymmetric [noisy | clean] layout.
+
+grpo:
+  num_prompts_per_step: 16
+  num_generations_per_prompt: 8
+  max_num_steps: 400
+  # Benchmark both decoding modes every 20 steps, matching the BlockJustGRPO
+  # run's val cadence so the curves line up step-for-step.
+  val_period: 20
+  val_at_start: true
+  val_at_end: true
+  max_val_samples: null          # REQUIRED null on the nemo_gym path
+  skip_reference_policy_logprobs_calculation: true
+
+checkpointing:
+  enabled: true
+  checkpoint_dir: "results/grpo-nd3b-vllm-hybrid-ar-diffusion-nemogym-qamathcode"
+  save_period: 25
+  metric_name: "val:total_reward/mean"
+  higher_is_better: true
+
+policy:
+  worker_cls_fqn: "nemo_rl.models.policy.workers.hybrid_ar_diffusion_megatron_policy_worker.HybridARDiffusionMegatronPolicyWorker"
+
+  max_total_sequence_length: 1024
+  train_global_batch_size: 128
+  train_micro_batch_size: 4
+  logprob_batch_size: 4
+  generation_batch_size: 8
+  make_sequence_length_divisible_by: 4
+
+  hf_config_overrides:
+    block_size: 16
+
+  megatron_cfg:
+    context_parallel_size: 1
+    # The BlockJustGRPO run used activation_checkpointing=false. The hybrid
+    # scores the [noisy | clean] layout, which roughly doubles the sequence
+    # length seen by the backward pass, so checkpointing stays ON here to fit.
+    # This changes step time only, not the optimization.
+    activation_checkpointing: true
+    optimizer:
+      lr: 1.0e-6
+
+  logprob_estimation:
+    type: "hybrid_ar_diffusion"
+    mask_token_id: 100
+    # Matches the completed GSM8K hybrid run (diffusion val 0.8992 -> 0.9356),
+    # so the two hybrid results are comparable to each other as well.
+    ce_loss_weight: 0.1
+    mask_ratio_min: 0.2
+    mask_ratio_max: 0.8
+    elbo_weight_ce: true
+    seed_base: 0
+    noisy_tail_mode: "mask"
+    exclude_mask_token_from_logits: true
+
+  generation:
+    max_new_tokens: 256
+    vllm_cfg:
+      enable_sleep_mode: true      # required on BOTH groups: they time-share GPU memory
+    vllm_kwargs:
+      # AR rollouts, so the GRPO half is on-policy against the AR forward.
+      hf_overrides:
+        ar_mode: true
+      diffusion_config: null
+
+    # Diffusion-mode validation group. ar_mode is fixed at engine construction,
+    # so measuring diffusion decoding needs a second engine group. Settings
+    # match the BlockJustGRPO rollout path (leftmost, greedy) so the
+    # diffusion-mode numbers are comparable to that run's.
+    vllm_val_dllm_overrides:
+      vllm_cfg:
+        enable_sleep_mode: true
+      vllm_kwargs:
+        # Explicit false, not {}: overrides are deep-MERGED onto a copy of the
+        # rollout config, so {} would leave ar_mode: true in place.
+        hf_overrides:
+          ar_mode: false
+        diffusion_config:
+          temperature: 0.0
+          selection_policy: "leftmost"
+
+    # Diffusion-only validation: validate solely on the dedicated diffusion
+    # engine group, logged under the "validation" prefix. Setting this true
+    # would additionally validate on the rollout/AR engines, but on the Gym path
+    # that costs a second refit plus a full second pass through the Gym servers.
+    val_include_rollout_mode: false
+
+env:
+  should_use_nemo_gym: true
+  nemo_gym:
+    # ABSOLUTE paths into the real Gym tree, not the relative paths the parent
+    # config uses. Gym resolves each config's directory and creates a server
+    # venv there only `if not venv_path.exists()` (nemo_gym/cli.py:921). With
+    # relative paths the servers resolve into Ray's working_dir copy, where
+    # .venv is absent (Ray excludes it), so all six try to build venvs
+    # concurrently and fail with
+    #   Failed to install seed packages ... RECORD file not found
+    # The real tree already has eight healthy venvs, so absolute paths make
+    # Gym reuse them and skip creation entirely.
+    config_paths:
+      - /linnanw/justGRPO/version2/RL/3rdparty/Gym-workspace/Gym/responses_api_models/vllm_model/configs/vllm_model_for_training.yaml
+      - /linnanw/justGRPO/version2/RL/3rdparty/Gym-workspace/Gym/resources_servers/math_with_judge/configs/math_with_judge.yaml
+      - /linnanw/justGRPO/version2/RL/3rdparty/Gym-workspace/Gym/resources_servers/mcqa/configs/mcqa.yaml
+      - /linnanw/justGRPO/version2/RL/3rdparty/Gym-workspace/Gym/resources_servers/instruction_following/configs/instruction_following.yaml
+      - /linnanw/justGRPO/version2/RL/3rdparty/Gym-workspace/Gym/resources_servers/structured_outputs/configs/structured_outputs_json.yaml
+      - /linnanw/justGRPO/version2/RL/3rdparty/Gym-workspace/Gym/resources_servers/reasoning_gym/configs/reasoning_gym.yaml
+      - /linnanw/justGRPO/version2/RL/3rdparty/Gym-workspace/Gym/resources_servers/code_gen/configs/code_gen.yaml
+
+loss_fn:
+  # The hybrid loss implements neither the reference-policy KL penalty nor the
+  # generation importance-sampling correction; grpo.py asserts both are off.
+  reference_policy_kl_penalty: 0.0
+  use_importance_sampling_correction: false
+
+logger:
+  log_dir: "logs/grpo-nd3b-vllm-hybrid-ar-diffusion-nemogym-qamathcode"
+  wandb:
+    name: "nd3b_vllm_hybrid_ar_diffusion_nemogym_qamathcode"

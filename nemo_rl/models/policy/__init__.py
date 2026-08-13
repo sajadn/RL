@@ -487,6 +487,51 @@ class TraceGRPOLogprobEstimationConfig(TypedDict):
     exclude_mask_token_from_logits: NotRequired[bool]
 
 
+class HybridARDiffusionLogprobEstimationConfig(TypedDict):
+    """Score both halves of the asymmetric layout in one forward pass.
+
+    Trains the checkpoint's two generation modes together: the clean half of
+    DiffuGRPO's ``[noisy | clean]`` layout is an ordinary causal (AR) forward and
+    carries the GRPO clipped policy-gradient term, while the noisy half holds the
+    response with a random subset masked and carries a plain masked cross-entropy
+    term -- the MDM pretraining objective, with no ratio, clipping, or advantage
+    weighting. Because the clean half never attends to the noisy half, the mask
+    may be redrawn freely each step without invalidating ``prev_logprobs``.
+    """
+
+    type: Literal["hybrid_ar_diffusion"]
+    mask_token_id: int
+    # Weight (lambda) on the cross-entropy term:
+    #   loss = pg_loss_weight * pg_loss + ce_loss_weight * ce_loss
+    # The two terms have different natural magnitudes; log both and set this so
+    # they land within an order of magnitude of each other.
+    ce_loss_weight: float
+    # Weight on the policy-gradient term; defaults to 1.0 when absent. Set 0.0
+    # to train on the CE/MDM term alone (ablation isolating the diffusion
+    # objective), or set ce_loss_weight 0.0 for the RL-only counterpart.
+    pg_loss_weight: NotRequired[float]
+    # Per-sample masking ratio ``t`` is drawn from U(min, max). Must satisfy
+    # ``0 < min <= max < 1``; bounding away from the extremes avoids degenerate
+    # conditioning and high-variance CE (DiffuCoder/CoupledGRPO default is
+    # 0.2 / 0.8).
+    mask_ratio_min: float
+    mask_ratio_max: float
+    # Base offset folded into the per-row mask seed (the GRPO loop adds step and
+    # row index). Only affects reproducibility -- correctness does not depend on
+    # the mask realization.
+    seed_base: int
+    # Scale each sample's CE term by 1/t, recovering the masked-diffusion ELBO
+    # (LLaDA). False gives the unweighted cross-entropy, a reweighted variant.
+    elbo_weight_ce: NotRequired[bool]
+    # How the final block-padding tail of the noisy side is built:
+    #   mask = full-block mask tail (matches generation);
+    #   eos  = full-block with EOS tail (matches SFT padding);
+    #   none = no block-padding, partial final block.
+    noisy_tail_mode: NotRequired[str]
+    # Drop the MASK token from the scored logits (matches DiffuGRPO default).
+    exclude_mask_token_from_logits: NotRequired[bool]
+
+
 LogprobEstimationConfig = Union[
     JustGRPOLeftmostRevealLogprobEstimationConfig,
     DiffuGRPOLogprobEstimationConfig,
@@ -494,6 +539,7 @@ LogprobEstimationConfig = Union[
     CoupledGRPOLogprobEstimationConfig,
     ESPOBlockAwareLogprobEstimationConfig,
     TraceGRPOLogprobEstimationConfig,
+    HybridARDiffusionLogprobEstimationConfig,
 ]
 
 

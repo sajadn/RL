@@ -1,0 +1,151 @@
+defaults: "nemotron_labs_diffusion_3b_vllm_hybrid_ar_diffusion_megatron_nemogym_qamathcode.yaml"
+
+# Hybrid AR + diffusion on deepscaleR, validated on AIME 24/25/26 + a 5%
+# deepscaleR holdout.
+#
+# Inherits the algorithm untouched from the qamathcode hybrid config: same
+# `[noisy | clean]` layout, same ce_loss_weight 0.1, same AR rollouts
+# (`ar_mode`), same optimizer, same dedicated diffusion-mode validation engine.
+#
+# WHAT DIFFERS from the qamathcode run:
+#   1. dataset          -> deepscaleR (38,284 train) instead of super-v3 qamathcode
+#   2. Gym servers      -> math_with_judge only; the other five are unused here
+#   3. max_total_seq    -> 2048 (was 1024), see below
+#   4. validation       -> four subsets reported separately via agent aliases
+#
+# These numbers are therefore NOT comparable to the qamathcode hybrid /
+# PG-only / CE-only runs: different data AND a different sequence length.
+#
+# SEQUENCE LENGTH. deepscaleR prompts are short (p50 91, p95 201, max 1001
+# after filtering), so 1024 would already leave ~930 output tokens. 2048 is
+# chosen for a different reason: at 1024 the qamathcode runs showed generation
+# length collapsing 463 -> 232 tokens as the model learned to fit under the
+# cap. That bakes in a short-CoT prior which a longer *evaluation* length
+# cannot undo. 2048 leaves room for reasoning to grow.
+#
+# COST. The hybrid layout is noisy + clean ~= 2x the rollout length, so 2048
+# means a ~4096-token training sequence (the qamathcode runs sat at ~1984).
+# Expect roughly 2-2.5x the measured 49 s/step. If this OOMs, step
+# train_micro_batch_size down to 2 before touching context_parallel_size --
+# global batch is preserved either way, so the optimization is unchanged.
+
+grpo:
+  max_num_steps: 400
+  val_period: 20
+  val_at_start: true
+  val_at_end: true
+  # REQUIRED null on the nemo_gym path: run_grpo_nemo_gym.py overwrites both
+  # this and val_batch_size with len(val_dataset), making validation a single
+  # batch. That is why the in-training val file is subsampled to 340 rather
+  # than carrying the full 2,015-sample holdout -- the whole split is issued
+  # as one concurrent burst.
+  max_val_samples: null
+  skip_reference_policy_logprobs_calculation: true
+
+checkpointing:
+  enabled: true
+  checkpoint_dir: "results/grpo-nd3b-vllm-hybrid-deepscaler-aime"
+  save_period: 25
+  metric_name: "val:total_reward/mean"
+  higher_is_better: true
+
+policy:
+  # 2048 rollout budget -> ~4096-token [noisy | clean] training layout.
+  max_total_sequence_length: 2048
+
+  generation:
+    vllm_val_dllm_overrides:
+      vllm_kwargs:
+        diffusion_config:
+          temperature: 0.0
+          # Commit every position whose chosen-token probability clears the
+          # bar, rather than a fixed count per step.
+          #
+          # Why not the alternatives. `leftmost` (the parent hybrid config)
+          # and `low_confidence` both take their commit count from the even
+          # transfer schedule, k = ceil(masks / remaining_steps). With
+          # max_denoising_steps unset it falls back to canvas_length
+          # (nemotron_dllm.py:504-507) and canvas_length falls back to
+          # hf_config.canvas_length -> 32 (the model config has no such key;
+          # `block_size: 16` does NOT feed it). k is then 1 at every step, so
+          # BOTH policies decode at one token per forward -- strictly more
+          # expensive than autoregressive for identical output, and TPF is
+          # pinned to 1.0 no matter what the model learned.
+          #
+          # `confidence_threshold` drops the schedule: tokens-per-forward
+          # becomes adaptive, so a model that grows more confident decodes
+          # faster and the efficiency effect is visible in the validation
+          # curve instead of hidden. It also matches the Megatron-Bridge
+          # offline harness (threshold=0.9) exactly, so in-training and
+          # offline numbers are finally measuring the same decode.
+          #
+          # This policy was added to this vLLM tree for this experiment; see
+          # _scratch/test_confidence_threshold.py for the selection-logic
+          # tests (schedule-independence, progress guarantee, threshold
+          # respected rather than top-k).
+          selection_policy: "confidence_threshold"
+          confidence_threshold: 0.9
+
+          # SAMPLED VALIDATION (temperature > 0) -- consider enabling for a new
+          # run rather than mid-flight, since it changes what the curve means.
+          #
+          # Greedy pass@1 on this 250-problem holdout cannot resolve the effect:
+          # measured across six checkpoints, 45% of problems (112/250) flip
+          # between correct and incorrect, putting the noise floor near +/-4
+          # points -- wider than anything observed in 100 steps. Training reward
+          # rose 25% over the same window with validation dead flat.
+          #
+          # Setting temperature 1.0 here makes validation sample, so
+          # `{agent}/accuracy` becomes avg@1-per-prompt; pair it with a
+          # validation file repeating each prompt k times to get avg@k, whose
+          # variance is ~sqrt(k) lower. Diffusion temperature is engine-wide
+          # (per-request temperature is rejected), so greedy and sampled cannot
+          # share one engine group -- pick one, or evaluate the other offline
+          # with _scratch/sampled_val_eval.py.
+
+  megatron_cfg:
+    # Non-negotiable at this layout size; the qamathcode run already OOMed at
+    # half this length with checkpointing off.
+    activation_checkpointing: true
+
+env:
+  should_use_nemo_gym: true
+  nemo_gym:
+    # Absolute paths: Gym creates a server venv relative to each config's own
+    # directory and only `if not venv_path.exists()`. Relative paths resolve
+    # into Ray's working_dir copy (which excludes .venv), so every server races
+    # to build one and fails. See the qamathcode config for the full note.
+    #
+    # math_with_judge only -- deepscaleR and AIME are both pure math. The
+    # eval-aliases file adds four validation-only agents (aime24_agent,
+    # aime25_agent, aime26_agent, deepscaler_val_agent) that all bind to this
+    # same resources server, so the verifier is identical across them and only
+    # the metric label differs.
+    config_paths:
+      - /linnanw/justGRPO/version2/RL/3rdparty/Gym-workspace/Gym/responses_api_models/vllm_model/configs/vllm_model_for_training.yaml
+      - /linnanw/justGRPO/version2/RL/3rdparty/Gym-workspace/Gym/resources_servers/math_with_judge/configs/math_with_judge.yaml
+      - /linnanw/justGRPO/version2/RL/3rdparty/Gym-workspace/Gym/resources_servers/math_with_judge/configs/math_with_judge_eval_aliases.yaml
+
+data:
+  max_input_seq_length: null   # no-op on the nemo_gym path (see processors.py)
+  shuffle: true
+  num_workers: 1
+  train:
+    dataset_name: NemoGymDataset
+    data_path: "/linnanw/justGRPO/dataset/deepscaler_aime_gym/train_deepscaler.jsonl"
+  validation:
+    dataset_name: NemoGymDataset
+    # 90 AIME + 250-sample deepscaleR subsample. The full 5% holdout
+    # (val_all.jsonl, 2,105 samples) is for the final offline evaluation.
+    data_path: "/linnanw/justGRPO/dataset/deepscaler_aime_gym/val_intraining.jsonl"
+  default:
+    dataset_name: NemoGymDataset
+    env_name: "nemo_gym"
+    prompt_file: null
+    system_prompt_file: null
+    processor: "nemo_gym_data_processor"
+
+logger:
+  log_dir: "logs/grpo-nd3b-vllm-hybrid-deepscaler-aime"
+  wandb:
+    name: "nd3b_vllm_hybrid_deepscaler_aime"

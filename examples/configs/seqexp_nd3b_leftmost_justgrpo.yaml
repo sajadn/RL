@@ -1,0 +1,25 @@
+# Controlled seqlen×CP experiment — NON-BLOCK JustGRPO (leftmost reveal) for
+# Nemotron-Labs-Diffusion-3B in diffusion mode. Inherits the vLLM leftmost config
+# (worker=JustGRPOMegatronPolicyWorker, loss=just_grpo_leftmost_reveal), swaps in the
+# SYNTHETIC openai_format dataset (filler user message sets input length), disables
+# early stop, and forces output length via ignore_eos. Launcher overrides per (cp, seqlen).
+defaults: "gsm8k_nemotron_labs_diffusion_3b_vllm_justgrpo_leftmost_megatron.yaml"
+
+policy:
+  generation:
+    stop_token_ids: []      # no early stop
+    stop_strings: null
+    ignore_eos: true        # force generation to run to max_new_tokens (fills output = 0.2*S)
+
+data:
+  train:
+    dataset_name: openai_format
+    data_path: "/linnanw/runs/diffusion_rl/seqexp_data/placeholder_train.jsonl"
+    chat_key: messages
+    env_name: math
+  validation:
+    dataset_name: openai_format
+    data_path: "/linnanw/runs/diffusion_rl/seqexp_data/placeholder_val.jsonl"
+    chat_key: messages
+    env_name: math
+  max_input_seq_length: 65536

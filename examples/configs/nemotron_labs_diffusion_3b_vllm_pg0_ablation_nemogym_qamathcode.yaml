@@ -1,0 +1,32 @@
+defaults: "nemotron_labs_diffusion_3b_vllm_ce0_ablation_nemogym_qamathcode.yaml"
+
+# ABLATION: CE only. loss = 0 * pg_loss + 0.1 * ce_loss
+#
+# The mirror image of the ce0 ablation, and identical to it in every other
+# respect (AR rollouts, same [noisy | clean] layout, same data, same Gym
+# servers, same optimizer, same low_confidence validation decode).
+#
+# With pg_loss_weight 0 there is no RL signal at all: rollouts are still
+# generated autoregressively and rewards are still computed and logged, but no
+# gradient flows from them. What remains is masked cross-entropy on the model's
+# own AR rollouts -- i.e. self-distillation into the diffusion (MDM) objective.
+#
+# Together the three runs decompose the hybrid:
+#   pg + ce (hybrid)   base TPF 3.19 -> step_400 9.95, acc 0.1172 -> 0.1744
+#   pg only  (ce0)     measuring now
+#   ce only  (this)    isolates what the diffusion objective does alone
+
+policy:
+  logprob_estimation:
+    # Mute the RL half; keep the CE weight the hybrid used so the surviving
+    # term is exactly the hybrid's, not a rescaled version of it.
+    pg_loss_weight: 0.0
+    ce_loss_weight: 0.1
+
+logger:
+  log_dir: "logs/grpo-nd3b-vllm-pg0-ablation-nemogym-qamathcode"
+  wandb:
+    name: "nd3b_vllm_pg0_ablation_nemogym_qamathcode"
+
+checkpointing:
+  checkpoint_dir: "results/grpo-nd3b-vllm-pg0-ablation-nemogym-qamathcode"

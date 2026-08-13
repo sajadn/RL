@@ -1,0 +1,81 @@
+# Hybrid AR + diffusion on Nemotron-Labs-Diffusion-3B, DeepScaleR train / AIME 2024 val.
+#
+# Trains BOTH generation modes of the checkpoint from a single forward pass over
+# DiffuGRPO's asymmetric [noisy | clean] layout:
+#
+#   clean half  -> ordinary causal attention over the clean side only, i.e. a
+#                  teacher-forced AR forward. Carries the GRPO clipped policy
+#                  gradient (the RL term). Rollouts are AR, so this half is
+#                  genuinely on-policy.
+#   noisy half  -> the response with a random subset of tokens replaced by MASK.
+#                  Carries a plain masked cross-entropy term -- the MDM
+#                  pretraining objective, NOT an RL objective: no ratio, no
+#                  clipping, no advantage weighting.
+#
+# Division of labour: the RL term decides what is good and improves the AR mode;
+# the CE term makes the diffusion mode reproduce those same trajectories. As RL
+# lifts the AR mode, the CE targets improve with it -- on-policy distillation.
+#
+# The LM head already runs over the whole sequence, so the clean-half logits were
+# being computed and discarded by the diffusion-only workers. The CE term is
+# therefore close to free: one forward, two losses.
+#
+# Inherits the AR chain (SGLang ar_mode=true generation, DeepScaleR/AIME data,
+# 4096 sequence budget, KL off, lr/scheduler, group sampling).
+defaults: "deepscaler_nemotron_labs_diffusion_3b_sglang_ar_megatron.yaml"
+
+policy:
+  worker_cls_fqn: "nemo_rl.models.policy.workers.hybrid_ar_diffusion_megatron_policy_worker.HybridARDiffusionMegatronPolicyWorker"
+
+  # The [noisy | clean] layout roughly doubles the scored sequence, so the AR
+  # chain's mb=4 does not fit. Matches the CoupledGRPO production ceiling.
+  train_micro_batch_size: 2
+  logprob_batch_size: 2
+
+  # block_size 16 keeps the noisy-side block padding and the asymmetric attention
+  # windows aligned with the other diffusion runs, and reuses their HF->mcore
+  # conversion cache. Generation is AR and ignores it.
+  hf_config_overrides:
+    block_size: 16
+
+  logprob_estimation:
+    type: "hybrid_ar_diffusion"
+    mask_token_id: 100
+    # lambda on the cross-entropy term: loss = pg_loss + ce_loss_weight * ce_loss.
+    # The two terms have different natural magnitudes -- read pg_loss / ce_loss
+    # from the first logged steps and retune so they are within an order of
+    # magnitude rather than trusting this starting value.
+    ce_loss_weight: 1.0
+    # Per-sample masking ratio t ~ U(min, max). Bounded away from 0 and 1 so a
+    # sample never masks ~0% or ~100% of its response (DiffuCoder default).
+    mask_ratio_min: 0.2
+    mask_ratio_max: 0.8
+    # Scale each sample's CE by 1/t. With the CE term normalized by the response
+    # token count this makes it an unbiased estimate of the masked-diffusion
+    # ELBO per response token (LLaDA). Set false for plain (reweighted) CE.
+    elbo_weight_ce: true
+    # Base offset folded into the per-row mask seed (grpo.py adds step and row).
+    # Reproducibility only: the clean half that feeds prev_logprobs does not
+    # depend on the mask, so nothing has to agree across passes.
+    seed_base: 0
+    # How the noisy side's final block-padding tail is built (mask | eos | none).
+    noisy_tail_mode: "mask"
+    # Drop the MASK token from the scored logits (matches DiffuGRPO default).
+    exclude_mask_token_from_logits: true
+
+loss_fn:
+  # The hybrid loss implements neither the reference-policy KL penalty nor the
+  # generation importance-sampling correction; grpo.py asserts both are off.
+  reference_policy_kl_penalty: 0.0
+  use_importance_sampling_correction: false
+
+checkpointing:
+  checkpoint_dir: "results/grpo-nemotron-diffusion-3b-hybrid-ar-diffusion-deepscaler-megatron"
+
+logger:
+  log_dir: "logs/grpo-nemotron-diffusion-3b-hybrid-ar-diffusion-deepscaler-megatron-sglang"
+  wandb:
+    name: "grpo-nemotron-diffusion-3b-hybrid-ar-diffusion-deepscaler-megatron-sglang"
+
+cluster:
+  num_nodes: 8

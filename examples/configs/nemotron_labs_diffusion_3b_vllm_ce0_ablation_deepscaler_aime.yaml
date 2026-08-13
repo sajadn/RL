@@ -1,0 +1,40 @@
+defaults: "nemotron_labs_diffusion_3b_vllm_hybrid_ar_diffusion_megatron_deepscaler_aime.yaml"
+
+# ABLATION: ce_loss_weight = 0, i.e. loss = pg_loss only (pure AR GRPO).
+#
+# Reproduces `deepscaler_aime_hybrid_v2` exactly -- same data and splits, same
+# 16x8=128 batch, same 2048 sequence length, same lr 1e-6, same 400 steps /
+# val_period 20 / save_period 20 / keep_top_k null, same four validation agent
+# aliases, same confidence-threshold 0.9 validation decode -- with the single
+# change that the CE term is muted.
+#
+# Reference (hybrid, ce_loss_weight 0.1), in-training validation:
+#   deepscaleR 0.4200 -> 0.5280 (peak 0.5400), AIME avg 0.1222 -> 0.1667,
+#   TPF 2.9601 -> 2.4296, val gen length 740 -> 1261.
+#
+# What this isolates: the [noisy | clean] layout is still BUILT and still
+# forwarded -- only its gradient contribution is zeroed. So step time stays
+# comparable and the only difference is the objective, not the compute shape.
+# Rollouts remain AR (ar_mode), which is what makes the surviving PG term
+# on-policy.
+#
+# Prior on the outcome, from the Gym qamathcode pair: PG-only tracked the
+# hybrid closely on accuracy (0.1803 vs 0.2434 final) and still improved
+# decode efficiency without any diffusion objective -- ce_loss fell 0.62 ->
+# 0.32 despite receiving zero gradient. The mirror ablation (pg_loss_weight 0,
+# CE only) collapsed outright, so PG is the load-bearing term. This run tests
+# whether that also holds on deepscaleR, where the task starts at 0.42 rather
+# than 0.09 and has far less headroom.
+
+policy:
+  logprob_estimation:
+    # The only intended difference from the hybrid run.
+    ce_loss_weight: 0.0
+
+logger:
+  log_dir: "logs/grpo-nd3b-vllm-ce0-ablation-deepscaler-aime"
+  wandb:
+    name: "nd3b_vllm_ce0_ablation_deepscaler_aime"
+
+checkpointing:
+  checkpoint_dir: "results/grpo-nd3b-vllm-ce0-ablation-deepscaler-aime"
