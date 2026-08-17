@@ -656,6 +656,7 @@ class BaseVllmGenerationWorker:
             top_p=self.cfg["top_p"],
             top_k=top_k_val,
             max_tokens=max_tokens,
+            ignore_eos=self.cfg.get("ignore_eos", False),
             logprobs=1 if self.return_entropy else 0,
             stop_token_ids=self.cfg["stop_token_ids"],
             stop=stop_strings,
@@ -950,6 +951,7 @@ class VllmGenerationWorker(BaseVllmGenerationWorker):
             top_p=self.cfg["top_p"],
             top_k=top_k if not greedy else 1,
             max_tokens=self.cfg["max_new_tokens"],
+            ignore_eos=self.cfg.get("ignore_eos", False),
             stop_token_ids=self.cfg["stop_token_ids"],
             stop=stop_strings,
             include_stop_str_in_output=True,  # returning stop strings like hf

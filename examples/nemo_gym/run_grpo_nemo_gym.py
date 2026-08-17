@@ -239,6 +239,28 @@ The validation set you pass in will directly be used for validation with no addi
     else:
         val_task_to_env = task_to_env
 
+    # Diffusion-mode validation. Gym reaches the policy only through
+    # `policy_base_url`, fixed when its servers start, so pointing validation at
+    # a different decoding mode needs its own Gym env bound to that engine's
+    # URLs -- passing `val_policy_generation` to grpo_train is not enough, since
+    # generation on this path flows through Gym rather than the generation
+    # object. The validation engine runs ar_mode=false (see
+    # `vllm_val_dllm_overrides`), so its servers decode with the diffusion
+    # canvas while rollouts stay autoregressive.
+    if val_policy_generation is not None:
+        val_nemo_gym_config = NemoGymConfig(
+            model_name=val_policy_generation.cfg["model_name"],
+            base_urls=val_policy_generation.dp_openai_server_base_urls,
+            initial_global_config_dict=copy.deepcopy(config["env"]["nemo_gym"]),
+        )
+        val_nemo_gym = create_env(env_name="nemo_gym", env_config=val_nemo_gym_config)
+        ray.get(val_nemo_gym.health_check.remote())
+        val_task_to_env = {"nemo_gym": val_nemo_gym}
+        print(
+            "  ✓ Diffusion-mode validation Gym env bound to the validation engine",
+            flush=True,
+        )
+
     if is_trajectory_collection:
         collect_trajectories(
             policy=policy,

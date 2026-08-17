@@ -1,0 +1,45 @@
+defaults: "nemotron_labs_diffusion_3b_vllm_hybrid_ar_diffusion_megatron_nemogym_qamathcode.yaml"
+
+# ABLATION: ce_loss_weight = 0, i.e. loss = pg_loss only.
+#
+# Everything else is identical to the hybrid run (nemogym_hybrid_diffval_v2):
+# same AR rollouts, same [noisy | clean] batch layout, same data, same Gym
+# servers, same optimizer settings. Only the CE/MDM term is muted.
+#
+# Purpose: the hybrid run's diffusion-mode gains were attributed to the CE term,
+# since the RL half never touches diffusion decoding (rollouts are AR and
+# pg_loss is the causal forward). This run tests that attribution directly. If
+# TPF still climbs to ~10 without the CE term, the attribution was wrong.
+#
+# Reference (hybrid, ce_loss_weight=0.1), measured on Megatron-Bridge at
+# gen_length 992 / threshold 0.9:
+#   base      acc 0.1172  TPF 3.19
+#   step_240  acc 0.1661  TPF 8.59
+#   step_400  acc 0.1744  TPF 9.95
+
+policy:
+  logprob_estimation:
+    # The only change that matters. The CE half is still computed (the batch
+    # layout is unchanged, so ce_loss is still reported for comparison) but
+    # contributes nothing to the gradient: loss = pg_loss + 0 * ce_loss.
+    ce_loss_weight: 0.0
+
+  generation:
+    vllm_val_dllm_overrides:
+      vllm_kwargs:
+        diffusion_config:
+          temperature: 0.0
+          # NOT leftmost. Leftmost commits one token per denoising pass, which
+          # pins TPF to 1.0 by construction and hides exactly the efficiency
+          # effect under test. low_confidence is the closest vLLM policy to the
+          # Megatron-Bridge harness's confidence-ordered reveal (vLLM has no
+          # confidence-threshold mode).
+          selection_policy: "low_confidence"
+
+logger:
+  log_dir: "logs/grpo-nd3b-vllm-ce0-ablation-nemogym-qamathcode"
+  wandb:
+    name: "nd3b_vllm_ce0_ablation_nemogym_qamathcode"
+
+checkpointing:
+  checkpoint_dir: "results/grpo-nd3b-vllm-ce0-ablation-nemogym-qamathcode"

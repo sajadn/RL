@@ -807,6 +807,35 @@ class VllmGeneration(GenerationInterface):
             print(f"Error during policy shutdown: {e}")
             return False
 
+    def get_diffusion_tpf_stats(self, reset: bool = False) -> dict[str, int]:
+        """Aggregate diffusion decode counters across every data-parallel worker.
+
+        ``TPF = committed_tokens / nfe``, where ``nfe`` counts
+        (request, denoising-step) pairs and excludes the per-block causal
+        KV-update forward -- the same definition the offline Megatron-Bridge
+        harness uses, so the two are directly comparable.
+
+        Data-parallel workers process disjoint requests, so their counters sum.
+        Returns zeros for a non-diffusion (ar_mode) engine group.
+        """
+        if not self.worker_group or not self.worker_group.workers:
+            return {"nfe": 0, "committed_tokens": 0}
+        if not self.cfg["vllm_cfg"]["async_engine"]:
+            return {"nfe": 0, "committed_tokens": 0}
+
+        futures = self.worker_group.run_all_workers_single_data(
+            "get_diffusion_tpf_stats_async",
+            reset=reset,
+            run_rank_0_only_axes=["tensor_parallel", "pipeline_parallel"],
+        )
+        totals = {"nfe": 0, "committed_tokens": 0}
+        for stats in ray.get(futures):
+            if not stats:
+                continue
+            for key in totals:
+                totals[key] += int(stats.get(key, 0))
+        return totals
+
     def prepare_refit_info(self, state_dict_info: dict[str, Any]) -> None:
         """Prepare the info for refit."""
         # Choose the appropriate method based on async_engine setting

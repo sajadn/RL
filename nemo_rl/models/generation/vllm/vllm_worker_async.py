@@ -1126,6 +1126,36 @@ class VllmAsyncGenerationWorker(BaseVllmGenerationWorker):
                 await asyncio.gather(*prompt_tasks, return_exceptions=True)
                 raise e
 
+    async def get_diffusion_tpf_stats_async(
+        self, reset: bool = False
+    ) -> dict[str, int]:
+        """Sum this worker's diffusion decode counters across its TP ranks.
+
+        Returns zeros when the engine is not running a diffusion sampler, so
+        an ar_mode rollout group contributes nothing rather than erroring.
+        """
+        if self.llm is None:
+            return {"nfe": 0, "committed_tokens": 0}
+
+        result_or_coro = await self.llm.collective_rpc(
+            "get_diffusion_tpf_stats", args=(reset,)
+        )
+        if asyncio.iscoroutine(result_or_coro):
+            per_rank = await result_or_coro
+        else:
+            per_rank = result_or_coro
+
+        # Tensor-parallel ranks run the diffusion sampler redundantly on the
+        # same requests, so their counters are copies -- take the max, not the
+        # sum, or TP>1 would inflate nfe by the TP factor.
+        totals = {"nfe": 0, "committed_tokens": 0}
+        for stats in per_rank:
+            if not stats:
+                continue
+            for key in totals:
+                totals[key] = max(totals[key], int(stats.get(key, 0)))
+        return totals
+
     async def report_device_id_async(self) -> list[str]:
         """Async version of report_device_id."""
         assert self.llm is not None, (

@@ -1,0 +1,27 @@
+# Controlled seqlen×CP experiment for Nemotron-Labs-Diffusion-3B BlockJustGRPO.
+# Inherits the proven gsm8k vLLM block-diffusion config, but swaps the dataset for a
+# SYNTHETIC openai_format jsonl whose user message is filler of a controlled token
+# length -> input length is set by the data, output length by max_new_tokens (with
+# early-stop DISABLED so generation fills). Reward = math env (hf_math_verify), which
+# runs on any response. Launcher overrides per (cp, seqlen): data_path, max_input_seq_length,
+# max_total_sequence_length, max_new_tokens, context_parallel_size, gpus_per_node.
+defaults: "gsm8k_nemotron_labs_diffusion_3b_vllm_block_justgrpo_megatron.yaml"
+
+policy:
+  generation:
+    stop_token_ids: []      # no early stop -> output fills max_new_tokens
+    stop_strings: null
+    ignore_eos: true        # force generation to run to max_new_tokens (don't stop at EOS)
+
+data:
+  train:
+    dataset_name: openai_format
+    data_path: "/linnanw/runs/diffusion_rl/seqexp_data/placeholder_train.jsonl"
+    chat_key: messages
+    env_name: math          # extract_necessary_env_names -> uses env.math (hf_math_verify)
+  validation:
+    dataset_name: openai_format
+    data_path: "/linnanw/runs/diffusion_rl/seqexp_data/placeholder_val.jsonl"
+    chat_key: messages
+    env_name: math
+  max_input_seq_length: 65536   # generous; launcher sets per-S. Input length is set by the filler.

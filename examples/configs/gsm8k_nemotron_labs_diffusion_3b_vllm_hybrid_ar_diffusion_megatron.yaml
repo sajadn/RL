@@ -1,0 +1,120 @@
+defaults: "gsm8k_nemotron_labs_diffusion_3b_vllm_block_justgrpo_megatron.yaml"
+
+# Hybrid AR + diffusion on Nemotron-Labs-Diffusion-3B, GSM8K train / GSM8K test,
+# with the vLLM diffusion backend running in AR mode.
+#
+# vLLM counterpart of
+# gsm8k_nemotron_labs_diffusion_3b_sglang_hybrid_ar_diffusion_megatron.yaml.
+# Inherits the vLLM BlockJustGRPO root for the model/megatron/data wiring and
+# changes two things: generation runs the backbone as a plain causal LM
+# (hf_overrides ar_mode, no diffusion canvas), and the policy worker + loss
+# become the hybrid pair.
+#
+# One forward over the asymmetric [noisy | clean] layout produces both terms:
+#   clean half -> causal AR logits  -> GRPO clipped policy gradient (RL)
+#   noisy half -> randomly masked   -> masked cross-entropy (MDM, no RL)
+# loss = pg_loss + ce_loss_weight * ce_loss
+#
+# Rollouts are AR, so the RL half is genuinely on-policy. vLLM ar_mode is
+# token-exact against SGLang ar_mode under greedy decode (see
+# _scratch/parity_ar_mode.py).
+#
+# Requires:
+#   - NRL_VLLM_PY_EXECUTABLE=<venv-gen>/bin/python  (custom vLLM 0.24 runtime)
+
+policy:
+  worker_cls_fqn: "nemo_rl.models.policy.workers.hybrid_ar_diffusion_megatron_policy_worker.HybridARDiffusionMegatronPolicyWorker"
+
+  # Halved from the block-justgrpo root (16/32 -> 8/8): the [noisy | clean]
+  # layout roughly doubles the scored sequence length, so that root's ceiling
+  # does not carry over. Raise only after a clean memory smoke.
+  train_micro_batch_size: 8
+  logprob_batch_size: 8
+
+  # Aligns the noisy-side block padding and the asymmetric attention windows
+  # with the other diffusion runs, and reuses their HF->mcore conversion cache.
+  # Generation is AR and ignores it.
+  hf_config_overrides:
+    block_size: 16
+
+  logprob_estimation:
+    type: "hybrid_ar_diffusion"
+    mask_token_id: 100
+    # lambda on the CE term. Read pg_loss / ce_loss from the first logged steps
+    # and retune so the two land within an order of magnitude of each other --
+    # do not trust this starting value.
+    ce_loss_weight: 1.0
+    # Per-sample masking ratio t ~ U(min, max), bounded away from 0 and 1.
+    mask_ratio_min: 0.2
+    mask_ratio_max: 0.8
+    # Scale each sample's CE by 1/t. With the CE term normalized by the response
+    # token count this is an unbiased masked-diffusion ELBO per response token.
+    elbo_weight_ce: true
+    # Reproducibility only -- the clean half does not depend on the mask.
+    seed_base: 0
+    noisy_tail_mode: "mask"
+    exclude_mask_token_from_logits: true
+
+  generation:
+    vllm_cfg:
+      # Required on BOTH engine groups: the rollout and validation engines
+      # time-share GPU memory, each sleeping while the other generates.
+      enable_sleep_mode: true
+    vllm_kwargs:
+      # Run the backbone as a plain causal LM: fully causal attention on
+      # vLLM's ordinary AR decode path. This also makes ModelConfig.is_diffusion
+      # False, which restores per-request sampling params (temperature 1.0 for
+      # on-policy rollouts, 0.0 for greedy validation) -- the diffusion path
+      # rejects those.
+      hf_overrides:
+        ar_mode: true
+      # No canvas in AR mode. Leaving the root's diffusion_config set would
+      # route decode back through the spec-decode path via
+      # num_speculative_tokens.
+      diffusion_config: null
+
+    # The hypothesis is that the CE (MDM) half improves DIFFUSION-mode quality,
+    # which AR-mode validation cannot measure. ar_mode is fixed at engine
+    # construction, so diffusion decoding needs its own engine group: a second
+    # set of engines that sleeps except during validation.
+    vllm_val_dllm_overrides:
+      vllm_cfg:
+        enable_sleep_mode: true
+      vllm_kwargs:
+        # Must be an explicit false, not an empty dict: the val config is a deep
+        # copy of the rollout config with these overrides deep-MERGED on top, so
+        # {} would leave the rollout's ar_mode: true in place. false selects the
+        # masked block-diffusion canvas path.
+        hf_overrides:
+          ar_mode: false
+        diffusion_config:
+          temperature: 0.0        # greedy validation
+          selection_policy: "leftmost"
+
+    # Also validate on the rollout (AR) engines, so both curves are reported:
+    # diffusion under "validation_dllm", AR under "validation". The AR curve is
+    # the guard that the CE term is not degrading AR quality.
+    val_include_rollout_mode: true
+
+loss_fn:
+  # The hybrid loss implements neither the reference-policy KL penalty nor the
+  # generation importance-sampling correction; grpo.py asserts both are off.
+  reference_policy_kl_penalty: 0.0
+  use_importance_sampling_correction: false
+
+grpo:
+  skip_reference_policy_logprobs_calculation: true
+  # Short smoke run by default; the launcher overrides for the long run.
+  val_period: 10
+  val_at_start: true
+  max_num_steps: 50
+
+checkpointing:
+  enabled: true
+  checkpoint_dir: "results/grpo-nemotron-diffusion-3b-hybrid-ar-diffusion-gsm8k-megatron-vllm"
+  save_period: 25
+
+logger:
+  log_dir: "logs/grpo-nemotron-diffusion-3b-hybrid-ar-diffusion-gsm8k-megatron-vllm"
+  wandb:
+    name: "grpo-nemotron-diffusion-3b-hybrid-ar-diffusion-gsm8k-megatron-vllm"

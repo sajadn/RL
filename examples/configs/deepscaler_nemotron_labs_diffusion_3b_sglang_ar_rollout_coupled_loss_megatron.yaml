@@ -1,0 +1,64 @@
+# Hybrid: AR rollouts + random-mask diffusion loss (CoupledGRPO estimator).
+#
+# Rollouts are generated AUTOREGRESSIVELY (inherits the AR chain's SGLang
+# ar_mode=true engine), but the policy gradient is computed under the DIFFUSION
+# factorization: CoupledGRPO's antithetic random masking (LLaDA-1.5) randomly
+# masks the AR-generated response at ratio t ~ U(0,1) and scores the masked
+# tokens in two complementary [noisy|clean] forward passes -- i.e. "randomly
+# mask the AR rollouts and compute the mask loss". This trains the model's
+# diffusion (mask-denoising) capability on trajectories sampled from its own
+# AR mode.
+#
+# Why this is sound with no code changes: loss_fn.use_importance_sampling_
+# correction is false in the inherited chain, so generation logprobs never
+# enter the loss. The PPO ratio is prev_logprobs vs training logprobs, BOTH
+# computed by the coupled estimator under the same per-row mask realization
+# (coupled_grpo_seed, wired in grpo.py) -- internally consistent. The AR
+# rollouts are simply off-policy samples w.r.t. the diffusion factorization.
+#
+# Notes vs the standard coupled bs16 config:
+# - No hf_config_overrides.block_size: generation is AR (block structure
+#   unused) and the noisy-side block padding follows the checkpoint default
+#   (32). This also reuses the AR chain's existing HF->mcore conversion cache.
+# - verify_gen_kl_with_sglang_mask stays OFF: it requires FastDiffuser
+#   final_step generation logprobs; AR generation has no reveal mask. The
+#   gen_kl/policy_kl diagnostics compare AR generation logprobs against
+#   masked-estimator logprobs -- apples-to-oranges, ignore those curves.
+# - Validation decodes in AR mode (inherited), so val accuracy is directly
+#   comparable to the AR baseline runs. To also track diffusion-mode val,
+#   add a sglang_val_dllm_overrides block with an sglang_cfg key (dedicated
+#   validation server group).
+# - mb=2 / logprob=2: the coupled [noisy|clean] layout (~3744 noisy + ~4094
+#   clean) matches the standard coupled runs' memory profile, whose ceiling
+#   is 2 (AR's 4/4 OOMs under the doubled layout).
+defaults: "deepscaler_nemotron_labs_diffusion_3b_sglang_ar_megatron.yaml"
+
+policy:
+  worker_cls_fqn: "nemo_rl.models.policy.workers.coupled_grpo_megatron_policy_worker.CoupledGRPOMegatronPolicyWorker"
+  train_micro_batch_size: 2
+  logprob_batch_size: 2
+
+  logprob_estimation:
+    type: "coupled_grpo"
+    # Mask levels per sequence = 2 * num_pairs; 2 = single antithetic pair.
+    num_mc_samples: 2
+    # Round the noisy side up to a full block with MASK tail (matches the
+    # checkpoint's native block-diffusion training layout).
+    noisy_tail_mode: "mask"
+    mask_token_id: 100
+    exclude_mask_token_from_logits: true
+    # Per-row mask seed offset; grpo.py folds in step and row index.
+    seed_base: 0
+
+checkpointing:
+  checkpoint_dir: "results/grpo-nemotron-diffusion-3b-ar-rollout-coupled-loss-deepscaler-megatron"
+
+logger:
+  log_dir: "logs/grpo-nemotron-diffusion-3b-ar-rollout-coupled-loss-deepscaler-megatron-sglang"
+  wandb:
+    name: "grpo-nemotron-diffusion-3b-ar-rollout-coupled-loss-deepscaler-megatron-sglang"
+
+cluster:
+  # Matches the standard coupled-GRPO production runs (coupled masked forwards
+  # are ~2x heavier per step than AR's single forward).
+  num_nodes: 8

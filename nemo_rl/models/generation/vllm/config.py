@@ -75,3 +75,8 @@ class VllmConfig(GenerationConfig):
     #
     # Absent/None => validation uses the same decoding as rollout.
     vllm_val_dllm_overrides: NotRequired[dict[str, Any] | None]
+
+    # When a validation group is present, also validate on the rollout engines
+    # so both decoding modes are reported: the dedicated group logs under
+    # "validation_dllm" and the rollout engines under "validation".
+    val_include_rollout_mode: NotRequired[bool]
