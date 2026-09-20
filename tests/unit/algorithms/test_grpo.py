@@ -6309,11 +6309,15 @@ def test_grpo_train_shuts_down_environments_after_failure():
     shutdown.assert_called_once_with(task_to_env, val_task_to_env)
 
 
-def test_grpo_train_shuts_down_environments_after_success():
+@pytest.mark.parametrize("use_custom_metrics", [False, True])
+def test_grpo_train_shuts_down_environments_after_success(use_custom_metrics):
     task_to_env = {"nemo_gym": MagicMock()}
 
+    rollout_metrics = MagicMock(return_value={})
+    extra_kwargs = {"rollout_metrics_fn": rollout_metrics} if use_custom_metrics else {}
+
     with (
-        patch("nemo_rl.algorithms.grpo._grpo_train_impl"),
+        patch("nemo_rl.algorithms.grpo._grpo_train_impl") as train_impl,
         patch("nemo_rl.algorithms.grpo.shutdown_environments") as shutdown,
     ):
         grpo_train(
@@ -6329,9 +6333,13 @@ def test_grpo_train_shuts_down_environments_after_success():
             checkpointer=MagicMock(),
             grpo_save_state=MagicMock(),
             master_config=MagicMock(),
+            **extra_kwargs,
         )
 
     shutdown.assert_called_once_with(task_to_env, task_to_env)
+
+    if use_custom_metrics:
+        assert train_impl.call_args.kwargs["rollout_metrics_fn"] is rollout_metrics
 
 
 @pytest.mark.parametrize(

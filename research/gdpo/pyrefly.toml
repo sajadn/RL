@@ -1,0 +1,6 @@
+python-version = "3.13.14"
+project-includes = ["gdpo/**/*.py", "run_gdpo.py"]
+search-path = ["../.."]
+
+# Match core treatment of optional backend and Transformers runtime APIs.
+replace-imports-with-any = ["nemo_automodel.*", "transformers.*", "ray.*"]

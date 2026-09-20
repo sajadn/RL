@@ -380,6 +380,7 @@ def prepare_loss_input(
     sampling_params: Optional[TrainingSamplingParams] = None,
     d2t: Optional[torch.Tensor] = None,
     chunk_size: Optional[int] = None,
+    precomputed_logprobs: bool = False,
     cp_sharder: Optional["ContextParallelSharder"] = None,
     teacher_output_layer_weight: Optional[torch.Tensor] = None,
 ) -> tuple[dict[str, Any], BatchedDataDict[Any]]:
@@ -417,15 +418,23 @@ def prepare_loss_input(
         loss_input = {"logits": logits}
 
     elif loss_fn.input_type == LossInputType.LOGPROB:
+        shift_targets = not getattr(loss_fn, "position_aligned_logprobs", False)
+        aligned = slice(1, None) if shift_targets else slice(None)
         # Linear CE fusion patch returns precomputed next-token logprobs (2D tensor).
         # Keep normal path unchanged for standard logits (3D tensor).
-        if (
+        if precomputed_logprobs:
+            # Masked diffusion policies arrive with a per-position ELBO already
+            # accumulated over the quadrature points, so there is no logits
+            # tensor to reduce and no causal shift to apply: the ELBO scores
+            # token i at position i and keeps the full sequence length.
+            logprobs = logits.to(torch.float32)
+        elif (
             hasattr(loss_fn, "use_fused_linear_logprobs")
             and loss_fn.use_fused_linear_logprobs
         ):
             logprobs = logits
             logprobs = logprobs.to(torch.float32)
-            logprobs = logprobs[:, : data["input_ids"].shape[1] - 1]
+            logprobs = logprobs[:, : data["input_ids"].shape[1] - int(shift_targets)]
         else:
             logprobs = get_next_token_logprobs_from_logits(
                 input_ids=data["input_ids"],
@@ -437,6 +446,7 @@ def prepare_loss_input(
                 sampling_params=sampling_params,
                 chunk_size=chunk_size,
                 cp_sharder=cp_sharder,
+                shift_targets=shift_targets,
             )
 
         # handle top-k/top-p filtering for logprobs, only used for ClippedPGLossFn now
@@ -444,7 +454,9 @@ def prepare_loss_input(
             # mask out negative infinity logprobs
             # prev_logprobs is already masked out in the previous step
             mask = data["token_mask"] * data["sample_mask"].unsqueeze(-1)
-            logprobs = mask_out_neg_inf_logprobs(logprobs, mask[:, 1:], "curr_logprobs")
+            logprobs = mask_out_neg_inf_logprobs(
+                logprobs, mask[:, aligned], "curr_logprobs"
+            )
 
             # compute unfiltered logprobs for reference policy KL penalty
             if (
@@ -462,6 +474,7 @@ def prepare_loss_input(
                     # Only reachable with top-k/top-p sampling active that has its own kernel path so don't chunk here
                     chunk_size=None,
                     cp_sharder=cp_sharder,
+                    shift_targets=shift_targets,
                 )
 
         loss_input = {"next_token_logprobs": logprobs}

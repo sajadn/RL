@@ -508,6 +508,10 @@ def setup(
     val_dataset: Optional[AllTaskProcessedDataset],
     processor: Optional[AutoProcessor] = None,
     policy_factory: Optional[Callable[..., ColocatablePolicyInterface]] = None,
+    generation_factory: Optional[
+        Callable[[PolicyConfig, ColocatablePolicyInterface], GenerationInterface]
+    ] = None,
+    loss_factory: Optional[Callable[..., ClippedPGLossFn]] = None,
 ) -> tuple[
     ColocatablePolicyInterface,
     Optional[GenerationInterface],
@@ -776,8 +780,9 @@ def setup(
             "policy.generation.top_p=1.0)."
         )
 
-    loss_fn = ClippedPGLossFn(
-        loss_config, use_fused_linear_logprobs=use_fused_linear_logprobs
+    loss_fn = (loss_factory or ClippedPGLossFn)(
+        loss_config,
+        use_fused_linear_logprobs=use_fused_linear_logprobs,
     )
 
     # Validate force_on_policy_ratio
@@ -802,7 +807,6 @@ def setup(
         )
 
     _validate_use_kl_in_reward_compat(master_config)
-
     # ==========================
     #          Cluster
     # ==========================
@@ -910,6 +914,7 @@ def setup(
             num_gpus_per_node=policy_gpus_per_node,
             max_colocated_worker_groups=1
             if generation_config["backend"] == "megatron"
+            or generation_factory is not None
             else 2,
             port_range_low=cluster_config.get("master_port_range_low"),
             port_range_high=cluster_config.get("master_port_range_high"),
@@ -1388,8 +1393,26 @@ def setup(
 
         return policy_generation, policy
 
+    # A caller-supplied factory supports research generation adapters without
+    # coupling the core algorithm to their runtime or configuration.
+    if generation_factory is not None:
+        assert colocated_inference, (
+            "Custom generation factories currently require colocated generation."
+        )
+        policy, policy_time = init_policy()
+        setup_timing_metrics.policy_init_time_s = policy_time
+        generation_t0 = time.perf_counter()
+        policy_generation = generation_factory(policy_config, policy)
+        setup_timing_metrics.generation_init_time_s = (
+            time.perf_counter() - generation_t0
+        )
+        print(
+            f"  ✓ Using custom {backend} generation with {policy_config['model_name']}",
+            flush=True,
+        )
+
     # Handle generation-specific setup
-    if backend == "megatron":
+    elif backend == "megatron":
         if enable_nemo_gym:
             print(
                 "  ⚡ Reserving the Megatron server address for overlapped NeMo Gym init",
@@ -2720,6 +2743,7 @@ def compute_and_apply_seq_logprob_error_masking(
     train_data: BatchedDataDict,
     rewards: torch.Tensor,
     seq_logprob_error_threshold: Optional[float],
+    position_aligned_logprobs: bool = False,
 ) -> dict:
     """Compute sequence-level logprob error metrics and optionally mask high-error sequences.
 
@@ -2741,10 +2765,11 @@ def compute_and_apply_seq_logprob_error_masking(
         num_masked_seqs, masked_correct_pct
     """
     # Compute sequence-level logprob error metrics (always)
-    token_mask = train_data["token_mask"][:, 1:]
+    aligned = slice(None) if position_aligned_logprobs else slice(1, None)
+    token_mask = train_data["token_mask"][:, aligned]
     sample_mask = train_data["sample_mask"]
-    prev_logprobs = train_data["prev_logprobs"][:, 1:]
-    generation_logprobs = train_data["generation_logprobs"][:, 1:]
+    prev_logprobs = train_data["prev_logprobs"][:, aligned]
+    generation_logprobs = train_data["generation_logprobs"][:, aligned]
     lp_error = torch.abs(generation_logprobs - prev_logprobs)
 
     # Use combined mask exactly as in loss function
@@ -2899,6 +2924,9 @@ def _grpo_train_impl(
     grpo_save_state: GRPOSaveState,
     master_config: MasterConfig,
     processor: Optional[AutoProcessor] = None,
+    rollout_metrics_fn: Callable[
+        ..., dict
+    ] = compute_and_apply_seq_logprob_error_masking,
 ) -> None:
     """Run GRPO training algorithm."""
     timer = Timer(context={"worker": "driver"})
@@ -3527,10 +3555,11 @@ def _grpo_train_impl(
                     # Cannot compute seq-level metrics with placeholder prev_logprobs
                     seq_logprob_error_metrics = _placeholder_seq_logprob_error_metrics()
                 else:
-                    seq_error_result = compute_and_apply_seq_logprob_error_masking(
+                    seq_error_result = rollout_metrics_fn(
                         train_data=train_data,
                         rewards=rewards,
                         seq_logprob_error_threshold=seq_logprob_error_threshold,
+                        position_aligned_logprobs=master_config.loss_fn.position_aligned_logprobs,
                     )
                     seq_logprob_error_metrics = seq_error_result
                     if "num_masked_seqs" in seq_logprob_error_metrics:
@@ -4108,6 +4137,9 @@ def grpo_train(
     grpo_save_state: GRPOSaveState,
     master_config: MasterConfig,
     processor: Optional[AutoProcessor] = None,
+    rollout_metrics_fn: Callable[
+        ..., dict
+    ] = compute_and_apply_seq_logprob_error_masking,
 ) -> None:
     """Run GRPO training and always tear down its environments."""
     try:
@@ -4125,6 +4157,7 @@ def grpo_train(
             grpo_save_state=grpo_save_state,
             master_config=master_config,
             processor=processor,
+            rollout_metrics_fn=rollout_metrics_fn,
         )
     finally:
         shutdown_environments(task_to_env, val_task_to_env)
@@ -5335,6 +5368,7 @@ def async_grpo_train(
                         train_data=train_data,
                         rewards=rewards,
                         seq_logprob_error_threshold=seq_logprob_error_threshold,
+                        position_aligned_logprobs=master_config.loss_fn.position_aligned_logprobs,
                     )
                     seq_logprob_error_metrics = seq_error_result
                     if "num_masked_seqs" in seq_logprob_error_metrics:

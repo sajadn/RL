@@ -553,6 +553,7 @@ class LossPostProcessor:
         dp_size: int,
         enable_seq_packing: bool = False,
         sampling_params: Optional[TrainingSamplingParams] = None,
+        precomputed_logprobs: bool = False,
     ):
         """Initialize LossPostProcessor.
 
@@ -566,6 +567,8 @@ class LossPostProcessor:
             dp_size: Data parallel size
             enable_seq_packing: Whether sequence packing is enabled
             sampling_params: Sampling parameters
+            precomputed_logprobs: Whether ``logits`` already contains token
+                log probabilities and should bypass vocabulary reduction.
         """
         self.loss_fn: LossFunction = loss_fn
         self.cfg: PolicyConfig = cfg
@@ -574,6 +577,7 @@ class LossPostProcessor:
         self.dp_size = dp_size
         self.enable_seq_packing = enable_seq_packing
         self.sampling_params = sampling_params
+        self.precomputed_logprobs = precomputed_logprobs
         self._cp_gradient_fanout = (
             cp_size
             if cp_size > 1
@@ -641,6 +645,7 @@ class LossPostProcessor:
         prepare_loss_input_wrapped = partial(
             prepare_loss_input,
             sampling_params=self.sampling_params,
+            precomputed_logprobs=self.precomputed_logprobs,
             context_parallel_group=(
                 self.cp_mesh.get_group() if self.cp_size > 1 else None
             ),
@@ -682,6 +687,7 @@ class LogprobsPostProcessor:
         cfg: PolicyConfig,
         enable_seq_packing: bool = False,
         sampling_params: Optional[TrainingSamplingParams] = None,
+        shift_targets: bool = True,
     ):
         """Initialize LogprobsPostProcessor.
 
@@ -689,11 +695,13 @@ class LogprobsPostProcessor:
             cfg: Configuration dictionary
             enable_seq_packing: Whether sequence packing is enabled
             sampling_params: Sampling parameters
+            shift_targets: Whether position ``i`` scores token ``i+1``.
         """
         self.cfg = cfg
         self.enable_seq_packing = enable_seq_packing
         self.sampling_params = sampling_params
         self.logprob_chunk_size = cfg.get("logprob_chunk_size", None)
+        self.shift_targets = shift_targets
 
     def __call__(
         self,
@@ -722,6 +730,7 @@ class LogprobsPostProcessor:
             Token log probabilities tensor [batch_size, seq_length]
         """
         input_lengths = data_dict["input_lengths"]
+        score_ids = processed_inputs.input_ids
 
         if cp_sharder is not None:
             # ``data_dict`` stays canonical under CP: ``_build_model_batch`` clones
@@ -736,29 +745,35 @@ class LogprobsPostProcessor:
                 cp_sharder,
                 chunk_size=self.logprob_chunk_size,
                 sampling_params=self.sampling_params,  # top-k and top-p filtering
+                shift_targets=self.shift_targets,
             )
 
-            assert token_logprobs.shape[1] == seq_len - 1
+            assert token_logprobs.shape[1] == (
+                seq_len - 1 if self.shift_targets else seq_len
+            )
         else:
             seq_len = processed_inputs.seq_len
             if isinstance(logits, DTensor):
                 # DTensor path with TP sharding
                 token_logprobs = get_logprobs_from_vocab_parallel_logits(
                     logits,
-                    processed_inputs.input_ids,
+                    score_ids,
                     chunk_size=self.logprob_chunk_size,
                     sampling_params=self.sampling_params,  # top-k and top-p filtering
+                    shift_targets=self.shift_targets,
                 )
             else:
                 # Non-DTensor path (no TP sharding)
                 token_logprobs = self._compute_local_logprobs(
-                    logits, processed_inputs.input_ids
+                    logits, score_ids, shift_targets=self.shift_targets
                 )
 
-        # Prepend 0 for first token to maintain sequence length
-        token_logprobs = torch.cat(
-            [torch.zeros_like(token_logprobs[:, :1]), token_logprobs], dim=1
-        )
+        if self.shift_targets:
+            # Prepend 0 for first token to maintain sequence length. Position-
+            # aligned scoring drops no position, so it needs no such padding.
+            token_logprobs = torch.cat(
+                [torch.zeros_like(token_logprobs[:, :1]), token_logprobs], dim=1
+            )
 
         # Handle sequence packing unpacking or mask application
         if self.enable_seq_packing:
@@ -769,10 +784,12 @@ class LogprobsPostProcessor:
             )
             cu_seqlens = processed_inputs.flash_attn_kwargs.cu_seqlens_q
             for i in range(original_batch_size):
-                start = cu_seqlens[i].item() + 1
+                start = cu_seqlens[i].item() + int(self.shift_targets)
                 end = cu_seqlens[i + 1].item()
                 seq_len_actual = input_lengths[i].item()
-                unpacked_logprobs[i, 1:seq_len_actual] = token_logprobs[0, start:end]
+                unpacked_logprobs[i, int(self.shift_targets) : seq_len_actual] = (
+                    token_logprobs[0, start:end]
+                )
             token_logprobs = unpacked_logprobs
         else:
             # Apply mask to zero out padding tokens logprobs
@@ -800,12 +817,17 @@ class LogprobsPostProcessor:
         self,
         logits: torch.Tensor,
         input_ids: torch.Tensor,
+        shift_targets: bool = True,
     ) -> torch.Tensor:
         """Compute logprobs locally without distributed processing.
 
         Args:
             logits: Model output logits
-            input_ids: Input token IDs
+            input_ids: Token IDs to score
+            shift_targets: If True (default), position ``i`` scores token ``i+1``
+                and the returned sequence is one shorter. If False, position
+                ``i`` scores token ``i`` and every position is kept -- the
+                masked diffusion convention.
 
         Returns:
             Token log probabilities
@@ -818,7 +840,9 @@ class LogprobsPostProcessor:
         # Input shapes:
         #   logits: [batch_size, sequence_length, vocab_size] - logits for each position
         #   token_ids: [batch_size, sequence_length] - actual tokens
-        next_tokens = input_ids[:, 1:].to(logits.device)
+        next_tokens = (input_ids[:, 1:] if shift_targets else input_ids).to(
+            logits.device
+        )
         target_seq_len = int(next_tokens.shape[1])
 
         if target_seq_len == 0:
