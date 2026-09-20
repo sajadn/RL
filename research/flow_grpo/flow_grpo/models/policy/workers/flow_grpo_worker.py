@@ -278,6 +278,7 @@ class FlowGRPOPolicyWorker:  # pragma: no cover
     def configure_worker(
         num_gpus: int | float | None = None,
         bundle_indices: tuple[int, list[int]] | None = None,
+        num_gpus_per_node: int | None = None,
     ) -> tuple[dict[str, Any], dict[str, str], dict[str, Any], dict[str, Any]]:
         """Returns (resources, env_vars, init_kwargs, runtime_env_overrides) for ``RayWorkerGroup``."""
         resources = {"num_gpus": 1, "num_cpus": 4}
