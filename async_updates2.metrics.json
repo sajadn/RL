@@ -1,0 +1,898 @@
+[
+  {
+    "step": 1,
+    "reward": 0.084,
+    "time_per_policy_update": 6.28,
+    "total_step_time": 12.56,
+    "gen_kl_error": 0.0007
+  },
+  {
+    "step": 2,
+    "reward": 0.0781,
+    "time_per_policy_update": 5.34,
+    "total_step_time": 10.68,
+    "gen_kl_error": 0.0007
+  },
+  {
+    "step": 3,
+    "reward": 0.0586,
+    "time_per_policy_update": 5.08,
+    "total_step_time": 10.15,
+    "gen_kl_error": 0.0007
+  },
+  {
+    "step": 4,
+    "reward": 0.0703,
+    "time_per_policy_update": 5.03,
+    "total_step_time": 10.05,
+    "gen_kl_error": 0.0008
+  },
+  {
+    "step": 5,
+    "reward": 0.084,
+    "time_per_policy_update": 5.04,
+    "total_step_time": 10.09,
+    "gen_kl_error": 0.0007
+  },
+  {
+    "step": 6,
+    "reward": 0.0488,
+    "time_per_policy_update": 5.0,
+    "total_step_time": 10.0,
+    "gen_kl_error": 0.001
+  },
+  {
+    "step": 7,
+    "reward": 0.1328,
+    "time_per_policy_update": 5.05,
+    "total_step_time": 10.09,
+    "gen_kl_error": 0.001
+  },
+  {
+    "step": 8,
+    "reward": 0.0859,
+    "time_per_policy_update": 5.3,
+    "total_step_time": 10.6,
+    "gen_kl_error": 0.0007
+  },
+  {
+    "step": 9,
+    "reward": 0.123,
+    "time_per_policy_update": 4.96,
+    "total_step_time": 9.92,
+    "gen_kl_error": 0.0009
+  },
+  {
+    "step": 10,
+    "reward": 0.1602,
+    "time_per_policy_update": 8.7,
+    "total_step_time": 17.4,
+    "gen_kl_error": 0.001
+  },
+  {
+    "step": 11,
+    "reward": 0.248,
+    "time_per_policy_update": 13.67,
+    "total_step_time": 27.35,
+    "gen_kl_error": 0.0008
+  },
+  {
+    "step": 12,
+    "reward": 0.1719,
+    "time_per_policy_update": 5.05,
+    "total_step_time": 10.1,
+    "gen_kl_error": 0.0006
+  },
+  {
+    "step": 13,
+    "reward": 0.1426,
+    "time_per_policy_update": 4.94,
+    "total_step_time": 9.88,
+    "gen_kl_error": 0.0006
+  },
+  {
+    "step": 14,
+    "reward": 0.1953,
+    "time_per_policy_update": 5.08,
+    "total_step_time": 10.15,
+    "gen_kl_error": 0.0007
+  },
+  {
+    "step": 15,
+    "reward": 0.1562,
+    "time_per_policy_update": 5.29,
+    "total_step_time": 10.57,
+    "gen_kl_error": 0.0007
+  },
+  {
+    "step": 16,
+    "reward": 0.2363,
+    "time_per_policy_update": 5.44,
+    "total_step_time": 10.89,
+    "gen_kl_error": 0.0007
+  },
+  {
+    "step": 17,
+    "reward": 0.3438,
+    "time_per_policy_update": 5.04,
+    "total_step_time": 10.08,
+    "gen_kl_error": 0.0007
+  },
+  {
+    "step": 18,
+    "reward": 0.3105,
+    "time_per_policy_update": 5.16,
+    "total_step_time": 10.33,
+    "gen_kl_error": 0.0007
+  },
+  {
+    "step": 19,
+    "reward": 0.3359,
+    "time_per_policy_update": 5.06,
+    "total_step_time": 10.12,
+    "gen_kl_error": 0.0007
+  },
+  {
+    "step": 20,
+    "reward": 0.1914,
+    "time_per_policy_update": 8.02,
+    "total_step_time": 16.03,
+    "gen_kl_error": 0.0007
+  },
+  {
+    "step": 21,
+    "reward": 0.2246,
+    "time_per_policy_update": 6.33,
+    "total_step_time": 12.67,
+    "gen_kl_error": 0.0008
+  },
+  {
+    "step": 22,
+    "reward": 0.2266,
+    "time_per_policy_update": 5.01,
+    "total_step_time": 10.01,
+    "gen_kl_error": 0.0009
+  },
+  {
+    "step": 23,
+    "reward": 0.3477,
+    "time_per_policy_update": 5.06,
+    "total_step_time": 10.13,
+    "gen_kl_error": 0.0008
+  },
+  {
+    "step": 24,
+    "reward": 0.2207,
+    "time_per_policy_update": 4.98,
+    "total_step_time": 9.95,
+    "gen_kl_error": 0.0009
+  },
+  {
+    "step": 25,
+    "reward": 0.2734,
+    "time_per_policy_update": 5.04,
+    "total_step_time": 10.08,
+    "gen_kl_error": 0.0009
+  },
+  {
+    "step": 26,
+    "reward": 0.1816,
+    "time_per_policy_update": 4.97,
+    "total_step_time": 9.94,
+    "gen_kl_error": 0.0009
+  },
+  {
+    "step": 27,
+    "reward": 0.2227,
+    "time_per_policy_update": 5.13,
+    "total_step_time": 10.26,
+    "gen_kl_error": 0.0011
+  },
+  {
+    "step": 28,
+    "reward": 0.1797,
+    "time_per_policy_update": 5.1,
+    "total_step_time": 10.2,
+    "gen_kl_error": 0.0009
+  },
+  {
+    "step": 29,
+    "reward": 0.3555,
+    "time_per_policy_update": 4.61,
+    "total_step_time": 9.21,
+    "gen_kl_error": 0.0009
+  },
+  {
+    "step": 30,
+    "reward": 0.2852,
+    "time_per_policy_update": 7.72,
+    "total_step_time": 15.45,
+    "gen_kl_error": 0.001
+  },
+  {
+    "step": 31,
+    "reward": 0.3359,
+    "time_per_policy_update": 6.36,
+    "total_step_time": 12.73,
+    "gen_kl_error": 0.0012
+  },
+  {
+    "step": 32,
+    "reward": 0.4102,
+    "time_per_policy_update": 4.84,
+    "total_step_time": 9.67,
+    "gen_kl_error": 0.0009
+  },
+  {
+    "step": 33,
+    "reward": 0.332,
+    "time_per_policy_update": 5.07,
+    "total_step_time": 10.13,
+    "gen_kl_error": 0.0009
+  },
+  {
+    "step": 34,
+    "reward": 0.3848,
+    "time_per_policy_update": 4.99,
+    "total_step_time": 9.99,
+    "gen_kl_error": 0.0008
+  },
+  {
+    "step": 35,
+    "reward": 0.4121,
+    "time_per_policy_update": 4.57,
+    "total_step_time": 9.15,
+    "gen_kl_error": 0.001
+  },
+  {
+    "step": 36,
+    "reward": 0.3457,
+    "time_per_policy_update": 4.76,
+    "total_step_time": 9.52,
+    "gen_kl_error": 0.0009
+  },
+  {
+    "step": 37,
+    "reward": 0.291,
+    "time_per_policy_update": 5.01,
+    "total_step_time": 10.03,
+    "gen_kl_error": 0.001
+  },
+  {
+    "step": 38,
+    "reward": 0.3359,
+    "time_per_policy_update": 4.96,
+    "total_step_time": 9.93,
+    "gen_kl_error": 0.0011
+  },
+  {
+    "step": 39,
+    "reward": 0.3184,
+    "time_per_policy_update": 4.92,
+    "total_step_time": 9.85,
+    "gen_kl_error": 0.001
+  },
+  {
+    "step": 40,
+    "reward": 0.4121,
+    "time_per_policy_update": 7.62,
+    "total_step_time": 15.24,
+    "gen_kl_error": 0.0011
+  },
+  {
+    "step": 41,
+    "reward": 0.4043,
+    "time_per_policy_update": 5.84,
+    "total_step_time": 11.68,
+    "gen_kl_error": 0.0012
+  },
+  {
+    "step": 42,
+    "reward": 0.4863,
+    "time_per_policy_update": 4.75,
+    "total_step_time": 9.49,
+    "gen_kl_error": 0.001
+  },
+  {
+    "step": 43,
+    "reward": 0.3379,
+    "time_per_policy_update": 5.06,
+    "total_step_time": 10.12,
+    "gen_kl_error": 0.001
+  },
+  {
+    "step": 44,
+    "reward": 0.3086,
+    "time_per_policy_update": 4.78,
+    "total_step_time": 9.57,
+    "gen_kl_error": 0.0011
+  },
+  {
+    "step": 45,
+    "reward": 0.3496,
+    "time_per_policy_update": 5.02,
+    "total_step_time": 10.04,
+    "gen_kl_error": 0.0012
+  },
+  {
+    "step": 46,
+    "reward": 0.3906,
+    "time_per_policy_update": 4.73,
+    "total_step_time": 9.46,
+    "gen_kl_error": 0.0013
+  },
+  {
+    "step": 47,
+    "reward": 0.4004,
+    "time_per_policy_update": 4.85,
+    "total_step_time": 9.71,
+    "gen_kl_error": 0.0009
+  },
+  {
+    "step": 48,
+    "reward": 0.2754,
+    "time_per_policy_update": 5.0,
+    "total_step_time": 10.01,
+    "gen_kl_error": 0.0015
+  },
+  {
+    "step": 49,
+    "reward": 0.3652,
+    "time_per_policy_update": 4.72,
+    "total_step_time": 9.45,
+    "gen_kl_error": 0.0015
+  },
+  {
+    "step": 50,
+    "reward": 0.2227,
+    "time_per_policy_update": 7.85,
+    "total_step_time": 15.7,
+    "gen_kl_error": 0.001
+  },
+  {
+    "step": 51,
+    "reward": 0.3633,
+    "time_per_policy_update": 5.89,
+    "total_step_time": 11.78,
+    "gen_kl_error": 0.0011
+  },
+  {
+    "step": 52,
+    "reward": 0.3457,
+    "time_per_policy_update": 4.81,
+    "total_step_time": 9.63,
+    "gen_kl_error": 0.0013
+  },
+  {
+    "step": 53,
+    "reward": 0.3828,
+    "time_per_policy_update": 4.72,
+    "total_step_time": 9.44,
+    "gen_kl_error": 0.0011
+  },
+  {
+    "step": 54,
+    "reward": 0.3301,
+    "time_per_policy_update": 4.77,
+    "total_step_time": 9.55,
+    "gen_kl_error": 0.0011
+  },
+  {
+    "step": 55,
+    "reward": 0.3945,
+    "time_per_policy_update": 4.84,
+    "total_step_time": 9.68,
+    "gen_kl_error": 0.0013
+  },
+  {
+    "step": 56,
+    "reward": 0.1816,
+    "time_per_policy_update": 5.3,
+    "total_step_time": 10.6,
+    "gen_kl_error": 0.0018
+  },
+  {
+    "step": 57,
+    "reward": 0.3477,
+    "time_per_policy_update": 4.77,
+    "total_step_time": 9.54,
+    "gen_kl_error": 0.0016
+  },
+  {
+    "step": 58,
+    "reward": 0.3477,
+    "time_per_policy_update": 4.57,
+    "total_step_time": 9.14,
+    "gen_kl_error": 0.0126
+  },
+  {
+    "step": 59,
+    "reward": 0.3418,
+    "time_per_policy_update": 4.68,
+    "total_step_time": 9.35,
+    "gen_kl_error": 0.0048
+  },
+  {
+    "step": 60,
+    "reward": 0.2051,
+    "time_per_policy_update": 7.93,
+    "total_step_time": 15.85,
+    "gen_kl_error": 0.0023
+  },
+  {
+    "step": 61,
+    "reward": 0.3027,
+    "time_per_policy_update": 6.24,
+    "total_step_time": 12.47,
+    "gen_kl_error": 0.0017
+  },
+  {
+    "step": 62,
+    "reward": 0.2969,
+    "time_per_policy_update": 4.98,
+    "total_step_time": 9.95,
+    "gen_kl_error": 0.0012
+  },
+  {
+    "step": 63,
+    "reward": 0.2637,
+    "time_per_policy_update": 4.84,
+    "total_step_time": 9.67,
+    "gen_kl_error": 0.0013
+  },
+  {
+    "step": 64,
+    "reward": 0.3047,
+    "time_per_policy_update": 4.84,
+    "total_step_time": 9.68,
+    "gen_kl_error": 0.0018
+  },
+  {
+    "step": 65,
+    "reward": 0.3672,
+    "time_per_policy_update": 4.78,
+    "total_step_time": 9.56,
+    "gen_kl_error": 0.0018
+  },
+  {
+    "step": 66,
+    "reward": 0.4277,
+    "time_per_policy_update": 4.84,
+    "total_step_time": 9.68,
+    "gen_kl_error": 0.0014
+  },
+  {
+    "step": 67,
+    "reward": 0.3301,
+    "time_per_policy_update": 5.01,
+    "total_step_time": 10.02,
+    "gen_kl_error": 0.0012
+  },
+  {
+    "step": 68,
+    "reward": 0.3516,
+    "time_per_policy_update": 4.99,
+    "total_step_time": 9.99,
+    "gen_kl_error": 0.0014
+  },
+  {
+    "step": 69,
+    "reward": 0.3965,
+    "time_per_policy_update": 4.57,
+    "total_step_time": 9.14,
+    "gen_kl_error": 0.0012
+  },
+  {
+    "step": 70,
+    "reward": 0.2559,
+    "time_per_policy_update": 8.2,
+    "total_step_time": 16.4,
+    "gen_kl_error": 0.0013
+  },
+  {
+    "step": 71,
+    "reward": 0.3926,
+    "time_per_policy_update": 5.62,
+    "total_step_time": 11.24,
+    "gen_kl_error": 0.0013
+  },
+  {
+    "step": 72,
+    "reward": 0.3496,
+    "time_per_policy_update": 4.76,
+    "total_step_time": 9.52,
+    "gen_kl_error": 0.0014
+  },
+  {
+    "step": 73,
+    "reward": 0.3594,
+    "time_per_policy_update": 4.76,
+    "total_step_time": 9.52,
+    "gen_kl_error": 0.0016
+  },
+  {
+    "step": 74,
+    "reward": 0.3867,
+    "time_per_policy_update": 5.01,
+    "total_step_time": 10.01,
+    "gen_kl_error": 0.0018
+  },
+  {
+    "step": 75,
+    "reward": 0.3047,
+    "time_per_policy_update": 5.0,
+    "total_step_time": 10.0,
+    "gen_kl_error": 0.0013
+  },
+  {
+    "step": 76,
+    "reward": 0.2754,
+    "time_per_policy_update": 5.25,
+    "total_step_time": 10.51,
+    "gen_kl_error": 0.0021
+  },
+  {
+    "step": 77,
+    "reward": 0.4004,
+    "time_per_policy_update": 4.85,
+    "total_step_time": 9.69,
+    "gen_kl_error": 0.0015
+  },
+  {
+    "step": 78,
+    "reward": 0.3105,
+    "time_per_policy_update": 5.17,
+    "total_step_time": 10.34,
+    "gen_kl_error": 0.0014
+  },
+  {
+    "step": 79,
+    "reward": 0.2656,
+    "time_per_policy_update": 5.01,
+    "total_step_time": 10.01,
+    "gen_kl_error": 0.0013
+  },
+  {
+    "step": 80,
+    "reward": 0.2832,
+    "time_per_policy_update": 7.48,
+    "total_step_time": 14.96,
+    "gen_kl_error": 0.0017
+  },
+  {
+    "step": 81,
+    "reward": 0.3125,
+    "time_per_policy_update": 6.33,
+    "total_step_time": 12.65,
+    "gen_kl_error": 0.0012
+  },
+  {
+    "step": 82,
+    "reward": 0.3379,
+    "time_per_policy_update": 4.81,
+    "total_step_time": 9.62,
+    "gen_kl_error": 0.0012
+  },
+  {
+    "step": 83,
+    "reward": 0.3438,
+    "time_per_policy_update": 4.52,
+    "total_step_time": 9.05,
+    "gen_kl_error": 0.0016
+  },
+  {
+    "step": 84,
+    "reward": 0.4238,
+    "time_per_policy_update": 4.87,
+    "total_step_time": 9.74,
+    "gen_kl_error": 0.0016
+  },
+  {
+    "step": 85,
+    "reward": 0.3477,
+    "time_per_policy_update": 4.81,
+    "total_step_time": 9.62,
+    "gen_kl_error": 0.0015
+  },
+  {
+    "step": 86,
+    "reward": 0.1777,
+    "time_per_policy_update": 5.2,
+    "total_step_time": 10.39,
+    "gen_kl_error": 0.0017
+  },
+  {
+    "step": 87,
+    "reward": 0.3477,
+    "time_per_policy_update": 4.73,
+    "total_step_time": 9.45,
+    "gen_kl_error": 0.0013
+  },
+  {
+    "step": 88,
+    "reward": 0.293,
+    "time_per_policy_update": 4.72,
+    "total_step_time": 9.44,
+    "gen_kl_error": 0.0012
+  },
+  {
+    "step": 89,
+    "reward": 0.2988,
+    "time_per_policy_update": 5.21,
+    "total_step_time": 10.43,
+    "gen_kl_error": 0.0012
+  },
+  {
+    "step": 90,
+    "reward": 0.1855,
+    "time_per_policy_update": 7.63,
+    "total_step_time": 15.26,
+    "gen_kl_error": 0.0013
+  },
+  {
+    "step": 91,
+    "reward": 0.4258,
+    "time_per_policy_update": 6.4,
+    "total_step_time": 12.8,
+    "gen_kl_error": 0.0013
+  },
+  {
+    "step": 92,
+    "reward": 0.2832,
+    "time_per_policy_update": 4.8,
+    "total_step_time": 9.6,
+    "gen_kl_error": 0.0011
+  },
+  {
+    "step": 93,
+    "reward": 0.2598,
+    "time_per_policy_update": 5.01,
+    "total_step_time": 10.01,
+    "gen_kl_error": 0.0012
+  },
+  {
+    "step": 94,
+    "reward": 0.2812,
+    "time_per_policy_update": 5.03,
+    "total_step_time": 10.07,
+    "gen_kl_error": 0.0016
+  },
+  {
+    "step": 95,
+    "reward": 0.4434,
+    "time_per_policy_update": 5.0,
+    "total_step_time": 10.0,
+    "gen_kl_error": 0.0015
+  },
+  {
+    "step": 96,
+    "reward": 0.3613,
+    "time_per_policy_update": 4.95,
+    "total_step_time": 9.91,
+    "gen_kl_error": 0.0017
+  },
+  {
+    "step": 97,
+    "reward": 0.2969,
+    "time_per_policy_update": 5.12,
+    "total_step_time": 10.23,
+    "gen_kl_error": 0.0016
+  },
+  {
+    "step": 98,
+    "reward": 0.291,
+    "time_per_policy_update": 4.82,
+    "total_step_time": 9.63,
+    "gen_kl_error": 0.002
+  },
+  {
+    "step": 99,
+    "reward": 0.334,
+    "time_per_policy_update": 4.82,
+    "total_step_time": 9.65,
+    "gen_kl_error": 0.0016
+  },
+  {
+    "step": 100,
+    "reward": 0.4746,
+    "time_per_policy_update": 7.43,
+    "total_step_time": 14.87,
+    "gen_kl_error": 0.0018
+  },
+  {
+    "step": 101,
+    "reward": 0.3652,
+    "time_per_policy_update": 6.39,
+    "total_step_time": 12.78,
+    "gen_kl_error": 0.0015
+  },
+  {
+    "step": 102,
+    "reward": 0.3438,
+    "time_per_policy_update": 4.72,
+    "total_step_time": 9.43,
+    "gen_kl_error": 0.0015
+  },
+  {
+    "step": 103,
+    "reward": 0.2461,
+    "time_per_policy_update": 4.98,
+    "total_step_time": 9.96,
+    "gen_kl_error": 0.0014
+  },
+  {
+    "step": 104,
+    "reward": 0.4199,
+    "time_per_policy_update": 4.76,
+    "total_step_time": 9.53,
+    "gen_kl_error": 0.0016
+  },
+  {
+    "step": 105,
+    "reward": 0.2969,
+    "time_per_policy_update": 5.0,
+    "total_step_time": 10.0,
+    "gen_kl_error": 0.0016
+  },
+  {
+    "step": 106,
+    "reward": 0.3926,
+    "time_per_policy_update": 5.25,
+    "total_step_time": 10.51,
+    "gen_kl_error": 0.0016
+  },
+  {
+    "step": 107,
+    "reward": 0.3574,
+    "time_per_policy_update": 4.83,
+    "total_step_time": 9.66,
+    "gen_kl_error": 0.0015
+  },
+  {
+    "step": 108,
+    "reward": 0.3594,
+    "time_per_policy_update": 4.77,
+    "total_step_time": 9.53,
+    "gen_kl_error": 0.0013
+  },
+  {
+    "step": 109,
+    "reward": 0.4336,
+    "time_per_policy_update": 4.83,
+    "total_step_time": 9.67,
+    "gen_kl_error": 0.0012
+  },
+  {
+    "step": 110,
+    "reward": 0.2031,
+    "time_per_policy_update": 7.52,
+    "total_step_time": 15.04,
+    "gen_kl_error": 0.0015
+  },
+  {
+    "step": 111,
+    "reward": 0.377,
+    "time_per_policy_update": 6.05,
+    "total_step_time": 12.09,
+    "gen_kl_error": 0.0014
+  },
+  {
+    "step": 112,
+    "reward": 0.4434,
+    "time_per_policy_update": 4.76,
+    "total_step_time": 9.53,
+    "gen_kl_error": 0.0014
+  },
+  {
+    "step": 113,
+    "reward": 0.5137,
+    "time_per_policy_update": 4.73,
+    "total_step_time": 9.47,
+    "gen_kl_error": 0.0014
+  },
+  {
+    "step": 114,
+    "reward": 0.2695,
+    "time_per_policy_update": 5.19,
+    "total_step_time": 10.37,
+    "gen_kl_error": 0.0015
+  },
+  {
+    "step": 115,
+    "reward": 0.2812,
+    "time_per_policy_update": 5.18,
+    "total_step_time": 10.35,
+    "gen_kl_error": 0.0016
+  },
+  {
+    "step": 116,
+    "reward": 0.4062,
+    "time_per_policy_update": 4.78,
+    "total_step_time": 9.55,
+    "gen_kl_error": 0.0012
+  },
+  {
+    "step": 117,
+    "reward": 0.248,
+    "time_per_policy_update": 5.09,
+    "total_step_time": 10.19,
+    "gen_kl_error": 0.0013
+  },
+  {
+    "step": 118,
+    "reward": 0.2188,
+    "time_per_policy_update": 5.04,
+    "total_step_time": 10.07,
+    "gen_kl_error": 0.0014
+  },
+  {
+    "step": 119,
+    "reward": 0.3633,
+    "time_per_policy_update": 4.83,
+    "total_step_time": 9.66,
+    "gen_kl_error": 0.0015
+  },
+  {
+    "step": 120,
+    "reward": 0.3184,
+    "time_per_policy_update": 7.55,
+    "total_step_time": 15.1,
+    "gen_kl_error": 0.0017
+  },
+  {
+    "step": 121,
+    "reward": 0.3398,
+    "time_per_policy_update": 6.21,
+    "total_step_time": 12.41,
+    "gen_kl_error": 0.0016
+  },
+  {
+    "step": 122,
+    "reward": 0.3145,
+    "time_per_policy_update": 4.87,
+    "total_step_time": 9.74,
+    "gen_kl_error": 0.0018
+  },
+  {
+    "step": 123,
+    "reward": 0.377,
+    "time_per_policy_update": 4.59,
+    "total_step_time": 9.19,
+    "gen_kl_error": 0.0019
+  },
+  {
+    "step": 124,
+    "reward": 0.2695,
+    "time_per_policy_update": 4.85,
+    "total_step_time": 9.71,
+    "gen_kl_error": 0.002
+  },
+  {
+    "step": 125,
+    "reward": 0.3164,
+    "time_per_policy_update": 5.07,
+    "total_step_time": 10.13,
+    "gen_kl_error": 0.0017
+  },
+  {
+    "step": 126,
+    "reward": 0.2207,
+    "time_per_policy_update": 5.25,
+    "total_step_time": 10.5,
+    "gen_kl_error": 0.0019
+  },
+  {
+    "step": 127,
+    "reward": 0.3027,
+    "time_per_policy_update": 4.74,
+    "total_step_time": 9.48,
+    "gen_kl_error": 0.0017
+  },
+  {
+    "step": 128,
+    "reward": 0.3242,
+    "time_per_policy_update": 5.9,
+    "total_step_time": 11.8,
+    "gen_kl_error": 0.0016
+  }
+]

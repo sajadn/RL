@@ -1,0 +1,38 @@
+{
+  "sync_updates1": {
+    "source": "training log (timings rounded to 0.01 s; rewards rounded to 4 decimal places)",
+    "num_rollout_steps": 128,
+    "num_policy_updates": 128,
+    "mean_time_per_policy_update": 12.0728125,
+    "mean_total_step_time": 12.0728125,
+    "last_32_mean_reward": 0.35583750000000003,
+    "max_gen_kl_error": 0.0007
+  },
+  "sync_updates2": {
+    "source": "training log (timings rounded to 0.01 s; rewards rounded to 4 decimal places)",
+    "num_rollout_steps": 128,
+    "num_policy_updates": 256,
+    "mean_time_per_policy_update": 7.3634375,
+    "mean_total_step_time": 14.7271875,
+    "last_32_mean_reward": 0.349675,
+    "max_gen_kl_error": 0.0019
+  },
+  "async_updates1": {
+    "source": "training log (timings rounded to 0.01 s; rewards rounded to 4 decimal places)",
+    "num_rollout_steps": 128,
+    "num_policy_updates": 128,
+    "mean_time_per_policy_update": 7.860859375,
+    "mean_total_step_time": 7.860859375,
+    "last_32_mean_reward": 0.34661875,
+    "max_gen_kl_error": 0.0013
+  },
+  "async_updates2": {
+    "source": "training log (timings rounded to 0.01 s; rewards rounded to 4 decimal places)",
+    "num_rollout_steps": 128,
+    "num_policy_updates": 256,
+    "mean_time_per_policy_update": 5.3953125,
+    "mean_total_step_time": 10.790625,
+    "last_32_mean_reward": 0.3349625,
+    "max_gen_kl_error": 0.0126
+  }
+}
