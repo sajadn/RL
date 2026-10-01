@@ -19,7 +19,7 @@ from just_grpo.algorithms.block_just_grpo import BlockJustGRPOSchedule
 from just_grpo.config import DiffusionSamplingParams, ScheduleConfig, validate_config
 from just_grpo.diffusion.denoising_schedule import aggregate_diffusion_logprobs
 from just_grpo.generation.megatron_generation import generate_responses, sample_batch
-from test_schedule import TinyDiffusion
+from test_schedule import TinyDiffusion, asymmetric_mask
 from test_sudoku_and_config import BASE, RECIPE, load, load_reference_vllm
 
 from nemo_rl.distributed.batched_data_dict import BatchedDataDict
@@ -34,14 +34,15 @@ class TinyDoubled:
 
     def __call__(self, ids, positions):
         self.calls.append((ids.clone(), positions.clone()))
-        width = ids.shape[1] // 2
-        q = torch.arange(2 * width)[:, None]
-        k = torch.arange(2 * width)[None, :]
-        mask = (
-            ((q < width) & (k < width) & (q // 4 == k // 4))
-            | ((q < width) & (k >= width) & (q // 4 > (k - width) // 4))
-            | ((q >= width) & (k >= width) & (q >= k))
+        # The clean section starts where logical positions reset to zero.
+        width = int((positions[0] == 0).nonzero()[0])
+        prompt = int(positions[0, 0])
+        meta = BatchedDataDict(
+            prompt_lengths=torch.full((ids.shape[0],), prompt),
+            noisy_valid_lengths=torch.full((ids.shape[0],), width),
+            clean_lengths=torch.full((ids.shape[0],), prompt + width),
         )
+        mask = asymmetric_mask(meta, width, ids.shape[1] - width)
         x = self.model.embedding(ids) + positions[..., None] / 100
         for layer in self.model.projections:
             q, k, v = layer(x).chunk(3, -1)
@@ -116,11 +117,11 @@ def test_sampled_logprobs_match_block_training(reveal):
         recomputed["logprobs"][:, 4:], expected, atol=2e-6, rtol=1e-5
     )
     first, positions = decoder.calls[0]
-    assert first.shape == (2, 32)
-    assert (first[:, 4:16] == 31).all()
-    torch.testing.assert_close(positions[:, :16], positions[:, 16:])
+    assert first.shape == (2, 24)
+    assert (first[:, :8] == 31).all()
+    torch.testing.assert_close(positions[:, :8], positions[:, 12:20])
     for inputs, _ in decoder.calls:
-        torch.testing.assert_close(inputs[:, :16], inputs[:, 16:])
+        torch.testing.assert_close(inputs[:, :8], inputs[:, 12:20])
 
 
 @pytest.mark.parametrize("reveal", [1, 2, 4])
@@ -132,8 +133,8 @@ def test_independent_eos_and_sampled_mask_tokens(reveal):
         logits = torch.full((*ids.shape, 8), -100.0)
         logits[0, :, 2] = 0
         logits[1, :, 7] = 0  # MASK is a valid sampled token.
-        logits[1, 7, 7] = -100
-        logits[1, 7, 2] = 0
+        logits[1, 3, 7] = -100
+        logits[1, 3, 2] = 0
         return logits
 
     result = sample_batch(
@@ -188,10 +189,10 @@ def test_mixed_lengths_microbatching_preserves_order():
     def forward(ids, positions):
         sizes.append(len(ids))
         logits = torch.full((*ids.shape, 8), -100.0)
-        logits.scatter_(-1, ids[:, :1, None].expand(-1, ids.shape[1], 1), 0.0)
+        logits.scatter_(-1, ids[:, 4:5, None].expand(-1, ids.shape[1], 1), 0.0)
         return logits
 
-    prompts = [[1] * 4, [2] * 8, [3] * 4, [4] * 4]
+    prompts = [[1] * 3, [2] * 8, [3] * 1, [4] * 3]
     result = generate_responses(
         forward,
         prompts,
@@ -208,7 +209,7 @@ def test_mixed_lengths_microbatching_preserves_order():
     assert max(sizes) == 2
 
 
-@pytest.mark.parametrize("prompt_length,context", [(3, 12), (4, 8), (4, 13)])
+@pytest.mark.parametrize("prompt_length,context", [(0, 12), (4, 8), (4, 13)])
 def test_invalid_alignment_or_context_fails_before_forward(prompt_length, context):
     def forward(*args):
         pytest.fail("Invalid context must fail before the model runs")

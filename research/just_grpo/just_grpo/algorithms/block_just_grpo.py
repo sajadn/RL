@@ -56,17 +56,21 @@ def select_low_confidence_tokens(
     if block_size is not None:
         if block_size < 1:
             raise ValueError("block_size must be positive")
-        width = valid.shape[1]
-        padding = -width % block_size
-        block_valid = torch.nn.functional.pad(valid, (0, padding)).reshape(
-            valid.shape[0], -1, block_size
-        )
-        scores = torch.nn.functional.pad(logprobs, (0, padding), value=float("inf"))
-        scores = scores.reshape_as(block_valid).masked_fill(~block_valid, float("inf"))
-        count = math.ceil(fraction * block_size)
-        order = scores.argsort(dim=-1, stable=True)[..., :count]
-        selected = torch.zeros_like(block_valid).scatter_(-1, order, True)
-        return (selected & block_valid).reshape(valid.shape[0], -1)[:, :width]
+        selected = torch.zeros_like(valid)
+        for row in range(valid.shape[0]):
+            positions = valid[row].nonzero().flatten()
+            if not positions.numel():
+                continue
+            start, end = int(positions[0]), int(positions[-1]) + 1
+            if end - start != positions.numel():
+                raise ValueError(
+                    "Block selection requires one contiguous response span"
+                )
+            for offset in range(start, end, block_size):
+                stop = min(offset + block_size, end)
+                order = logprobs[row, offset:stop].argsort(stable=True)
+                selected[row, offset + order[: math.ceil(fraction * block_size)]] = True
+        return selected
     counts = (valid.sum(dim=1) * fraction).ceil().long()
     order = logprobs.masked_fill(~valid, float("inf")).argsort(dim=1, stable=True)
     keep = torch.arange(valid.shape[1], device=valid.device)[None] < counts[:, None]
@@ -139,8 +143,7 @@ class BlockJustGRPOSchedule(DenoisingSchedule):
         offsets = self.base["position_ids"] % self.config.block_size
         valid = self.base["token_mask"]
         result = BatchedDataDict(self.base)
-        # Tail tokens after EOS stay MASK at every reveal level. Prefix MASK
-        # tokens belong to fixed context and are never part of masked_indices.
+        # Tail tokens after EOS stay MASK at every reveal level.
         result["masked_indices"] = self.canvas_mask & (
             ~self.response_mask | (offsets >= prefix)
         )

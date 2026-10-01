@@ -1678,6 +1678,10 @@ class MegatronPolicyWorkerImpl(
                 )
             raise
 
+    def _streaming_loss_token_mask(self, data: BatchedDataDict[Any]) -> torch.Tensor:
+        """Return predicted target positions for streaming loss normalization."""
+        return data["token_mask"][:, 1:]
+
     def _train_microbatch_body(
         self,
         state: dict[str, Any],
@@ -1695,10 +1699,10 @@ class MegatronPolicyWorkerImpl(
         sample_mask = data["sample_mask"]
         call_local_seqs = torch.sum(sample_mask).to(torch.float64)
         if "token_mask" in data:
-            token_mask = data["token_mask"]
-            call_local_toks = torch.sum(
-                token_mask[:, 1:] * sample_mask.unsqueeze(-1)
-            ).to(torch.float64)
+            token_mask = self._streaming_loss_token_mask(data)
+            call_local_toks = torch.sum(token_mask * sample_mask.unsqueeze(-1)).to(
+                torch.float64
+            )
         else:
             call_local_toks = call_local_seqs * data["input_ids"].shape[1]
 

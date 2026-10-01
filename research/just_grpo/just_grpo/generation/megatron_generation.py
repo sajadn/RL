@@ -142,21 +142,16 @@ def sample_batch(
     mask_token_id: int,
     stop_token_ids: list[int],
     generator: torch.Generator,
+    prepare_attention: Callable[[BatchedDataDict[Any]], None] | None = None,
 ) -> list[dict[str, Any]]:
-    """Decode aligned prompts using the training model's doubled block mask.
-
-    Each forward receives fixed-width [noisy | clean] inputs and repeated
-    positions. The current block is identical in both halves; noisy queries
-    can only read their own noisy block and earlier clean blocks. Unknown
-    future blocks remain MASK. Returned scores are measured at commitment.
-    """
+    """Decode original prompts with response-relative asymmetric block attention."""
     if sampling.selection_policy not in ("leftmost", "confidence_threshold"):
         raise ValueError(
             "Megatron generation supports leftmost or confidence_threshold selection"
         )
     block = sampling.block_size
-    if prompts.ndim != 2 or prompts.shape[1] == 0 or prompts.shape[1] % block:
-        raise ValueError("Require nonempty block-aligned prompts")
+    if prompts.ndim != 2 or prompts.shape[1] == 0:
+        raise ValueError("Require nonempty prompts")
     if max_new_tokens <= 0 or max_new_tokens % block:
         raise ValueError("Generation length must be positive and block-aligned")
     if (
@@ -174,11 +169,35 @@ def sample_batch(
         dtype=torch.long,
     )
     tokens[:, :prefix] = prompts
-    positions = (
-        torch.arange(max_sequence_length, device=prompts.device)[None]
-        .expand_as(tokens)
-        .repeat(1, 2)
+    noisy_positions = torch.arange(max_new_tokens, device=prompts.device)[None].expand(
+        batch, -1
     )
+    clean_positions = torch.arange(max_sequence_length, device=prompts.device)[
+        None
+    ].expand_as(tokens)
+    positions = torch.cat([prefix + noisy_positions, clean_positions], dim=1)
+    if prepare_attention is not None:
+        prepare_attention(
+            BatchedDataDict(
+                input_ids=tokens[:, prefix : prefix + max_new_tokens],
+                clean_input_ids=tokens,
+                prompt_lengths=torch.full(
+                    (batch,), prefix, device=prompts.device, dtype=torch.long
+                ),
+                response_lengths=torch.full(
+                    (batch,), max_new_tokens, device=prompts.device, dtype=torch.long
+                ),
+                noisy_valid_lengths=torch.full(
+                    (batch,), max_new_tokens, device=prompts.device, dtype=torch.long
+                ),
+                clean_lengths=torch.full(
+                    (batch,),
+                    prefix + max_new_tokens,
+                    device=prompts.device,
+                    dtype=torch.long,
+                ),
+            )
+        )
     scores = torch.zeros(
         (batch, max_new_tokens), device=prompts.device, dtype=torch.float32
     )
@@ -201,14 +220,17 @@ def sample_batch(
             eligible &= (block_start + offsets) < lengths[:, None]
             if not eligible.any():
                 break
-            logits = forward(torch.cat([tokens, tokens], dim=1), positions)
+            logits = forward(
+                torch.cat([tokens[:, prefix : prefix + max_new_tokens], tokens], dim=1),
+                positions,
+            )
             if sampling.selection_policy == "leftmost":
                 width = block // sampling.max_steps
                 lo, hi = step * width, (step + 1) * width
             else:
                 lo, hi = 0, block
             candidates, logprobs = sample_tokens(
-                logits[:, prefix + block_start + lo : prefix + block_start + hi],
+                logits[:, block_start + lo : block_start + hi],
                 temperature=sampling.temperature,
                 generator=generator,
             )
@@ -277,6 +299,7 @@ def generate_responses(
     max_sequence_length: int,
     mask_token_id: int,
     stop_token_ids: list[int],
+    prepare_attention: Callable[[BatchedDataDict[Any]], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Batch equal-length prompts and restore upstream request order."""
     if not prompts or batch_size < 1:
@@ -301,6 +324,7 @@ def generate_responses(
                 mask_token_id=mask_token_id,
                 stop_token_ids=stop_token_ids,
                 generator=generator,
+                prepare_attention=prepare_attention,
             )
             for index, output in zip(selected, outputs):
                 responses[index] = output

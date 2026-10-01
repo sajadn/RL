@@ -47,6 +47,18 @@ from just_grpo.diffusion.diffusion_processors import (
 def tensor_parallel_stubs(monkeypatch):
     monkeypatch.setattr(parallel_state, "get_tensor_model_parallel_rank", lambda: None)
     monkeypatch.setattr(parallel_state, "get_tensor_model_parallel_group", lambda: None)
+    monkeypatch.setattr(
+        "nemo_rl.models.megatron.train.get_tensor_model_parallel_rank", lambda: None
+    )
+    monkeypatch.setattr(
+        "nemo_rl.models.megatron.train.get_tensor_model_parallel_group", lambda: None
+    )
+    monkeypatch.setattr(
+        "nemo_rl.models.megatron.train.get_context_parallel_group", lambda: None
+    )
+    monkeypatch.setattr(
+        "nemo_rl.models.megatron.train.get_context_parallel_world_size", lambda: 1
+    )
 
 
 def processed(trajectory):
@@ -133,9 +145,12 @@ def test_selected_same_position_scores_and_gradients_match_dense(fraction):
         micro.input_ids[:, : clean.shape[1]],
         clean.masked_fill(trajectory["masked_indices"], 31),
     )
-    torch.testing.assert_close(micro.input_ids[:, clean.shape[1] :], clean)
     torch.testing.assert_close(
-        micro.position_ids[:, : clean.shape[1]], micro.position_ids[:, clean.shape[1] :]
+        micro.input_ids[:, clean.shape[1] :], trajectory["clean_input_ids"]
+    )
+    torch.testing.assert_close(
+        micro.position_ids[:, : clean.shape[1]],
+        trajectory["position_ids"] + trajectory["prompt_lengths"][:, None],
     )
     assert micro.data_dict is trajectory
     active = trajectory["token_mask"]
@@ -278,7 +293,12 @@ def test_worker_accumulates_levels_before_one_optimizer_step(monkeypatch, fracti
     def accumulate(level):
         # Mirror native streaming counts, including its AR first-column slice.
         counts["tokens"] += float(
-            (level["token_mask"][:, 1:] * level["sample_mask"][:, None]).sum()
+            (
+                MegatronDiffusionPolicyWorkerImpl._streaming_loss_token_mask(
+                    worker, level
+                )
+                * level["sample_mask"][:, None]
+            ).sum()
         )
         counts["sequences"] += float(level["sample_mask"].sum())
 
@@ -363,6 +383,7 @@ def test_scoring_coverage_depends_on_policy_role_not_router_replay(
 
     data = confidence_batch()
     worker = object.__new__(BlockJustGRPOPolicyWorkerImpl)
+    worker.model = torch.nn.Module()
     worker.just_grpo = SimpleNamespace(
         training_token_fraction=fraction, schedule=make_schedule(data).config
     )
@@ -414,6 +435,7 @@ def test_worker_preserves_fixed_model_canvas_for_short_rollouts():
 
     data = confidence_batch()
     worker = object.__new__(BlockJustGRPOPolicyWorkerImpl)
+    worker.model = torch.nn.Module()
     worker.just_grpo = SimpleNamespace(
         training_token_fraction=0.25, schedule=make_schedule(data).config
     )
@@ -423,3 +445,54 @@ def test_worker_preserves_fixed_model_canvas_for_short_rollouts():
     assert schedule.base["input_ids"].shape == (data.size, 32)
     assert schedule.num_steps == 1
     assert not schedule.base["token_mask"][:, data["input_ids"].shape[1] :].any()
+
+
+def test_diffusion_streaming_normalization_includes_first_response_token():
+    data = BatchedDataDict(
+        token_mask=torch.tensor([[1.0, 0.0, 1.0], [1.0, 1.0, 0.0]]),
+        sample_mask=torch.tensor([1.0, 0.0]),
+    )
+    worker = object.__new__(MegatronDiffusionPolicyWorkerImpl)
+    mask = worker._streaming_loss_token_mask(data)
+    assert (mask * data["sample_mask"][:, None]).sum() == 2
+
+
+def test_microbatch_keeps_original_context_and_response_logical_positions():
+    data = BatchedDataDict(
+        input_ids=torch.tensor([[2, 3, 4, 5, 6, 7, 8, 9]]),
+        token_mask=torch.tensor([[0, 0, 0, 1, 1, 1, 1, 1]]),
+        input_lengths=torch.tensor([8]),
+        sample_mask=torch.ones(1),
+    )
+    trajectory = next(make_schedule(data).iter_levels(data))
+    microbatch = prepare_diffusion_microbatch(processed(trajectory), mask_token_id=31)
+    width = trajectory["input_ids"].shape[1]
+    torch.testing.assert_close(microbatch.input_ids[:, width:], data["input_ids"])
+    assert microbatch.position_ids[0, :5].tolist() == [3, 4, 5, 6, 7]
+    assert trajectory["token_mask"][0, 0]
+
+
+def test_metadata_traverses_a_single_wrapped_model_and_is_shared_between_layers():
+    from megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention import (
+        NemotronLabsDiffusionAttention,
+    )
+
+    layers = []
+    for _ in range(2):
+        layer = object.__new__(NemotronLabsDiffusionAttention)
+        torch.nn.Module.__init__(layer)
+        layer.block_size = 4
+        layer._asymmetric_ar_metadata = None
+        layers.append(layer)
+    worker = object.__new__(MegatronDiffusionPolicyWorkerImpl)
+    worker.model = torch.nn.Module()
+    worker.model.add_module("module", torch.nn.Sequential(*layers))
+    worker.mask_token_id = 31
+    trajectory = next(make_schedule(confidence_batch()).iter_levels())
+    prepared = worker._prepare_diffusion_microbatch(processed(trajectory))
+    metadata = layers[0]._asymmetric_ar_metadata
+    assert metadata is layers[1]._asymmetric_ar_metadata
+    torch.testing.assert_close(metadata.prompt_lengths, torch.tensor([4, 8]))
+    assert prepared.input_ids.shape[1] == metadata.noisy_length + metadata.clean_length
+    worker._clear_asymmetric_metadata()
+    assert all(layer._asymmetric_ar_metadata is None for layer in layers)
