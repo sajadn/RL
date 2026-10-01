@@ -1,0 +1,12 @@
+# DeepScaleR TraceGRPO: entropy reveals of two tokens, one sampled trace level.
+# Rollouts and Megatron scoring use temperature 0.6; both validation modes use 1.0.
+defaults: ./trace_grpo-deepscaler-3b-4n8g-megatron-vllm-async-dualval-long.yaml
+
+policy:
+  generation:
+    temperature: 0.6
+
+logger:
+  log_dir: ${oc.env:LOG_DIR,logs/trace_grpo_deepscaler_3b_entropy2_temp06_2t2g_dualval}
+  wandb:
+    name: ${oc.env:WANDB_RUN_NAME,trace_grpo_deepscaler_3b_lr1e6_entropy2_temp06_level1_2t2g_dualval}

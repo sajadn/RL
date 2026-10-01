@@ -1,0 +1,122 @@
+# Fast JustGRPO: Nemotron-Labs-Diffusion-3B, DeepScaleR train / AIME2024 val.
+# Run with research/just_grpo/run_just_grpo.py and --generation-python pointing
+# to the provisioned diffusion-capable vLLM runtime. EXPANDABLE_SEGMENTS=false.
+# Requires asymmetric-attention Bridge support; original prompts are unpadded.
+#
+# Starting topology chosen for this experiment: 8 training + 2 generation nodes,
+# 8 GPUs/node (80 GPUs total). The diffusion_RL DeepScaleR Fast async recipes
+# use 16+2; this starts with half their training nodes and the same generation
+# capacity. Use step timings and collector waits to assess the balance.
+# TP=PP=CP=1: 64 training replicas, batch 1024 -> 16 samples per replica.
+# Validation engines time-share the 16 generation GPUs with rollout engines.
+#
+# This research branch selects the lowest sampled-token confidence per block;
+# diffusion_RL's older Fast recipes rank by entropy. At fraction 0.25, select
+# up to four valid response positions per 16-token block for the training loss.
+# Policy logprob diagnostics still score the full response.
+defaults: ./just_grpo-sudoku6x6-4n8g-megatron-vllm-async-dualval-long.yaml
+
+grpo:
+  num_prompts_per_step: 128
+  num_generations_per_prompt: 8
+  # The trainer requires positive integers; effectively uncapped within Slurm.
+  max_num_steps: 2147483647
+  max_num_epochs: 2147483647
+  normalize_rewards: true
+  skip_reference_policy_logprobs_calculation: true
+  val_at_start: true
+  val_at_end: true
+  val_period: 10
+  max_val_samples: 480
+  val_batch_size: 32
+
+loss_fn:
+  reference_policy_kl_penalty: 0.0
+
+just_grpo:
+  # Async rollout staleness can exceed the finite KL cutoff; retain NaN/Inf errors.
+  max_generation_kl: .inf
+  training_token_fraction: 0.25
+  sampling:
+    selection_policy: leftmost
+    max_steps: 16
+
+policy:
+  train_micro_batch_size: 1
+  logprob_batch_size: 1
+  max_total_sequence_length: 4096
+  refit_buffer_size_gb: 1.0
+  optimizer:
+    kwargs:
+      lr: 1.0e-6
+  megatron_cfg:
+    activation_checkpointing: false
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    optimizer:
+      min_lr: 1.0e-7
+    scheduler:
+      lr_decay_iters: ${grpo.max_num_steps}
+  generation:
+    max_new_tokens: 3744
+    colocated:
+      enabled: false
+      resources:
+        num_nodes: 2
+        gpus_per_node: 8
+    vllm_cfg:
+      # Leave room for the final diffusion canvas with original prompt tokens:
+      # 350 + 3744 + 16 = 4110.
+      max_model_len: 4160
+      enforce_eager: true
+      gpu_memory_utilization: 0.55
+      enable_vllm_metrics_logger: false
+    vllm_kwargs:
+      attention_backend: TRITON_ATTN
+      max_num_seqs: 32
+      kernel_config:
+        enable_flashinfer_autotune: false
+      hf_overrides:
+        architectures: [NemotronLabsDiffusionModel]
+        block_size: ${just_grpo.schedule.block_size}
+
+# Replace the inherited Sudoku datasets and environment entirely.
+data:
+  _override_: true
+  shuffle: true
+  num_workers: 1
+  use_multiple_dataloader: false
+  max_input_seq_length: 350
+  train:
+    dataset_name: DeepScaler
+  validation:
+    dataset_name: AIME2024
+    repeat: 16
+  default:
+    prompt_file: examples/prompts/cot.txt
+    system_prompt_file: null
+    processor: math_hf_data_processor
+    env_name: math
+
+env:
+  _override_: true
+  math:
+    num_workers: 8
+    math_verify_impl: hf_math_verify
+
+checkpointing:
+  # Current research validation rejects checkpoint saving for JustGRPO.
+  enabled: false
+
+logger:
+  log_dir: ${oc.env:LOG_DIR,logs/just_grpo_fast25_deepscaler_3b_8t2g_dualval}
+  wandb_enabled: true
+  tensorboard_enabled: true
+  wandb:
+    project: diffusion_rl
+    name: ${oc.env:WANDB_RUN_NAME,just_grpo_fast25_deepscaler_3b_lr1e6_8t2g_dualval}
+
+cluster:
+  num_nodes: 10
+  gpus_per_node: 8
