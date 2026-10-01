@@ -88,7 +88,9 @@ def test_generation_reuses_policy_dispatch_and_native_offload():
     policy.generate.assert_called_once_with(batch, greedy=False)
 
 
-@pytest.mark.parametrize("backend", ["vllm", "megatron"])
+@pytest.mark.parametrize(
+    "backend", ["vllm", "megatron", "vllm-dualval", "vllm-async-dualval", "vllm-ar"]
+)
 def test_native_setup_selects_vllm_or_megatron_generation(monkeypatch, backend):
     pytest.importorskip(
         "soundfile", reason="Full GRPO controller needs the NeMo-RL runtime"
@@ -97,7 +99,20 @@ def test_native_setup_selects_vllm_or_megatron_generation(monkeypatch, backend):
 
     from nemo_rl.algorithms import grpo
 
-    config = load() if backend == "megatron" else load_reference_vllm()
+    asynchronous = backend == "vllm-async-dualval"
+    config = (
+        load()
+        if backend == "megatron"
+        else load_reference_vllm(asynchronous=asynchronous)
+    )
+    if backend == "vllm-ar":
+        config.policy.hf_config_overrides = {
+            "vocab_size": 131072,
+            "architectures": ["NemotronLabsDiffusionModel"],
+        }
+        config.policy.generation.vllm_kwargs.hf_overrides = {
+            "architectures": ["NemotronLabsDiffusionForCausalLM"]
+        }
     master = grpo.MasterConfig(**OmegaConf.to_container(config, resolve=True))
     checkpointer = Mock()
     checkpointer.get_latest_checkpoint_path.return_value = None
@@ -110,7 +125,11 @@ def test_native_setup_selects_vllm_or_megatron_generation(monkeypatch, backend):
     loader = MagicMock()
     loader.__len__.return_value = 1
     monkeypatch.setattr(grpo, "StatefulDataLoader", Mock(return_value=loader))
-    monkeypatch.setattr(grpo, "RayVirtualCluster", Mock())
+    cluster = Mock()
+    cluster.world_size.return_value = 1
+    cluster.get_master_address_and_port.return_value = ("localhost", 12345)
+    monkeypatch.setattr(grpo, "RayVirtualCluster", Mock(return_value=cluster))
+    monkeypatch.setattr(grpo.ray, "get", lambda refs: refs)
     engine = Mock()
     monkeypatch.setattr(
         grpo,
@@ -118,15 +137,37 @@ def test_native_setup_selects_vllm_or_megatron_generation(monkeypatch, backend):
         engine,
     )
     native_policy = Mock()
+    native_policy.return_value.init_collective.return_value = []
     monkeypatch.setattr(grpo, "Policy", native_policy)
-    result = grpo.setup(master, Mock(), [Mock()], [Mock()])
+    setup_kwargs = {}
+    if backend.endswith("dualval"):
+        factory = Mock()
+        factory.return_value.init_collective.return_value = []
+        setup_kwargs = {
+            "vllm_generation_factory": factory,
+            "additional_colocated_worker_groups": 2,
+        }
+    result = grpo.setup(master, Mock(), [Mock()], [Mock()], **setup_kwargs)
+    if backend.endswith("dualval"):
+        engine.assert_not_called()
+        engine = factory
+        reservations = [
+            c.kwargs["max_colocated_worker_groups"]
+            for c in grpo.RayVirtualCluster.call_args_list
+        ]
+        assert reservations == ([1, 3] if asynchronous else [4])
+    if backend == "vllm-ar":
+        assert engine.call_args.kwargs["config"]["vllm_kwargs"]["hf_overrides"] == {
+            "vocab_size": 131072,
+            "architectures": ["NemotronLabsDiffusionForCausalLM"],
+        }
     native_policy.assert_called_once()
     engine.assert_called_once()
     assert result[0] is native_policy.return_value
     assert result[1] is engine.return_value
     if backend == "megatron":
         assert engine.call_args.kwargs["policy"] is native_policy.return_value
-    else:
+    elif not asynchronous:
         engine.return_value.finish_generation.assert_called_once()
 
 

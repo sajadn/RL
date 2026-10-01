@@ -232,6 +232,8 @@ class VllmConfig(GenerationConfig):
     # be combined with quant_cfg. Its runtime environment must already be in
     # ACTOR_ENVIRONMENT_REGISTRY.
     worker_extension_cls_fqn: NotRequired[str | None]
+    # Optional IPC/NCCL refit namespace for validation-only Megatron engine groups.
+    refit_namespace: NotRequired[str | None]
 
 
 def resolve_vllm_video_config(config: VllmConfig) -> VllmVideoConfig | None:

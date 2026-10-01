@@ -39,6 +39,7 @@ def test_native_sampling_keeps_reference_temperature_and_commit_logprobs(
     worker = object.__new__(worker_cls)
     worker.cfg = dict(
         temperature=temperature,
+        vllm_kwargs={"diffusion_config": {"temperature": temperature}},
         top_p=1.0,
         top_k=None,
         max_new_tokens=512,

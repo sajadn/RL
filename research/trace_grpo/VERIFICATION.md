@@ -64,3 +64,8 @@ uv run --no-cache --no-project --with pytest --python "$POLICY_PYTHON" \
   --ignore=research/just_grpo/tests/unit/test_megatron_adapter.py \
   -q --confcutdir=research
 ```
+
+## Shared multi-mode validation
+
+The [shared validation record](../just_grpo/VERIFICATION.md#multi-mode-ardiffusion-validation-2026-09-29)
+covers the sync/async AR and diffusion validation matrix, including Trace GPU smokes.

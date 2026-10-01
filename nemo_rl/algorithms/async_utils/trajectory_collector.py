@@ -935,6 +935,9 @@ class AsyncTrajectoryCollector:
             )
 
             def _run_rollout_batch() -> None:
+                # A manual pause can span a refit before this thread is started.
+                nonlocal generation_weight_version
+                generation_weight_version = self.current_weight_version
                 # Reattached here too: this is a fresh thread, which inherits no
                 # contextvars from the loop thread that spawned it.
                 with remote_trace_context(self._trace_carrier):
@@ -980,25 +983,12 @@ class AsyncTrajectoryCollector:
                 daemon=True,
                 name=f"rollout-batch-target-{reserved_target}",
             )
-            try:
-                with self._threads_lock:
-                    self._inflight_threads.add(worker)
-                    self._live_threads.add(worker)
-                if dispatched_task_indices:
-                    with self._outstanding_lock:
-                        self._outstanding_task_indices.update(dispatched_task_indices)
-                worker.start()
-                worker_started = True
-            except Exception:
-                with self._threads_lock:
-                    self._inflight_threads.discard(worker)
-                    self._live_threads.discard(worker)
-                if dispatched_task_indices:
-                    with self._outstanding_lock:
-                        self._outstanding_task_indices.difference_update(
-                            dispatched_task_indices
-                        )
-                raise
+            worker_started = self._start_worker_when_unpaused(
+                worker, dispatched_task_indices
+            )
+            if not worker_started:
+                self._release_target(reserved_target)
+                return batch
 
             backend = "NeMo-Gym" if use_nemo_gym else "native"
             print(
@@ -1039,9 +1029,52 @@ class AsyncTrajectoryCollector:
         if error_message is not None:
             raise RuntimeError(error_message)
 
+    def _start_worker_when_unpaused(
+        self, worker: _threading.Thread, dispatched_task_indices: list[int]
+    ) -> bool:
+        """Atomically gate, register and start work against pause/refit drains."""
+        while self.running:
+            self._manual_pause_cleared.wait()
+            self._refit_pause_cleared.wait()
+            with self._threads_lock:
+                if not self.running:
+                    return False
+                if not (
+                    self._manual_pause_cleared.is_set()
+                    and self._refit_pause_cleared.is_set()
+                ):
+                    continue
+                self._inflight_threads.add(worker)
+                self._live_threads.add(worker)
+                try:
+                    if dispatched_task_indices:
+                        with self._outstanding_lock:
+                            self._outstanding_task_indices.update(
+                                dispatched_task_indices
+                            )
+                    # A drain checks is_alive(), so start must hold the same lock.
+                    worker.start()
+                except Exception:
+                    self._inflight_threads.discard(worker)
+                    self._live_threads.discard(worker)
+                    if dispatched_task_indices:
+                        with self._outstanding_lock:
+                            self._outstanding_task_indices.difference_update(
+                                dispatched_task_indices
+                            )
+                    raise
+                return True
+        return False
+
+    def pause_and_drain(self) -> None:
+        """Stop new launches and finish all rollouts before engines can sleep."""
+        self.pause()
+        self.wait_for_pending_generations()
+
     def pause(self) -> None:
-        """Pause trajectory collection."""
-        self._manual_pause_cleared.clear()  # Signal collection to pause
+        """Pause trajectory collection atomically against worker starts."""
+        with self._threads_lock:
+            self._manual_pause_cleared.clear()
         print("Trajectory collection paused")
 
     def resume(self) -> None:
@@ -1063,7 +1096,8 @@ class AsyncTrajectoryCollector:
         print("🔄 Preparing for refit: pausing new generations...")
 
         # Pause new generation starts
-        self._refit_pause_cleared.clear()
+        with self._threads_lock:
+            self._refit_pause_cleared.clear()
         self._generation_pause_requested_for_refit = False
         self._generation_paused_for_refit = False
         print("⏸️ New generation starts paused")

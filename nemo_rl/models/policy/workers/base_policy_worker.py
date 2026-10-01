@@ -30,6 +30,7 @@ class AbstractPolicyWorker:
     # None until init_collective builds it. Declared so a rebuild can release the
     # previous group without probing for the attribute's existence.
     model_update_group: Optional[Any] = None
+    model_update_groups: Optional[dict[str, Any]] = None
     # Same, for the per-PP-stage group the nccl_reshard transport builds.
     pp_comm_group: Optional[Any] = None
 
@@ -49,6 +50,7 @@ class AbstractPolicyWorker:
         train_world_size: int,
         rank_offset: int = 0,
         nccl_peer: str = "nemo",
+        generation_group: Optional[str] = None,
     ) -> None:
         """Initialize the collective communication.
 
@@ -79,15 +81,19 @@ class AbstractPolicyWorker:
         # master, so every other rank is already counting down a 300s connect timeout
         # against this port; anything slow that runs first is spent from that budget.
         # Releasing first cost job 6518381 the whole run -- see release_within.
-        old_group, self.model_update_group = (
-            self.model_update_group,
-            StatelessProcessGroup(
-                master_address=ip,
-                port=port,
-                rank=self.rank + rank_offset,
-                world_size=world_size,
-            ),
+        group = StatelessProcessGroup(
+            master_address=ip,
+            port=port,
+            rank=self.rank + rank_offset,
+            world_size=world_size,
         )
+        if generation_group is None:
+            old_group, self.model_update_group = self.model_update_group, group
+        else:
+            if self.model_update_groups is None:
+                self.model_update_groups = {}
+            old_group = self.model_update_groups.get(generation_group)
+            self.model_update_groups[generation_group] = group
         # Rebuilding is the recovery path for a dead generation rank, so this runs more
         # than once per job. Without the release, each rebuild would strand the previous
         # NCCL communicator and its TCPStore for the life of the worker. Bounded, because
@@ -102,7 +108,20 @@ class AbstractPolicyWorker:
         # Release unused cached allocator blocks before NCCL communicator
         # initialization so transport buffers have sufficient device-memory headroom.
         torch.cuda.empty_cache()
-        self.model_update_group.init_nccl_communicator(device=device, peer=nccl_peer)
+        group.init_nccl_communicator(device=device, peer=nccl_peer)
+
+    def get_model_update_group(self, generation_group: Optional[str] = None) -> Any:
+        """Select the rollout collective or a named validation collective."""
+        if generation_group is None:
+            return self.model_update_group
+        if (
+            self.model_update_groups is None
+            or generation_group not in self.model_update_groups
+        ):
+            raise RuntimeError(
+                f"Refit group {generation_group!r} has not been initialized"
+            )
+        return self.model_update_groups[generation_group]
 
     def init_nccl_reshard_comm_group(
         self,
@@ -273,23 +292,26 @@ class AbstractPolicyWorker:
         # Get device UUID using NVML
         return get_device_uuid(device_idx)
 
-    def get_zmq_address(self) -> str:
-        """Get the ZMQ address for the current device."""
-        return f"ipc:///tmp/{self.report_device_id()}.sock"
+    def get_zmq_address(self, generation_group: Optional[str] = None) -> str:
+        """Address one engine group; None retains the legacy rollout socket."""
+        prefix = f"{generation_group}-" if generation_group else ""
+        return f"ipc:///tmp/{prefix}{self.report_device_id()}.sock"
 
-    def maybe_init_zmq(self) -> None:
-        """Initialize the ZMQ socket if it doesn't exist."""
-        if not hasattr(self, "zmq_socket"):
+    def maybe_init_zmq(self, generation_group: Optional[str] = None) -> None:
+        """Select a per-engine socket, preserving legacy callers of zmq_socket."""
+        if not hasattr(self, "zmq_sockets"):
+            self.zmq_sockets = {}
+        if generation_group in self.zmq_sockets:
+            self.zmq_socket = self.zmq_sockets[generation_group]
+            return
+        if not hasattr(self, "zmq_context"):
             self.zmq_context = zmq.Context()
-            self.zmq_socket = self.zmq_context.socket(zmq.REQ)
-            self.zmq_socket.setsockopt(
-                zmq.SNDTIMEO, 120000
-            )  # set timeout to 120 seconds
-            self.zmq_socket.setsockopt(
-                zmq.RCVTIMEO, 120000
-            )  # set timeout to 120 seconds
-            self.zmq_socket.setsockopt(zmq.LINGER, 0)
-            self.zmq_socket.bind(self.get_zmq_address())
+        self.zmq_socket = self.zmq_context.socket(zmq.REQ)
+        self.zmq_socket.setsockopt(zmq.SNDTIMEO, 120000)  # set timeout to 120 seconds
+        self.zmq_socket.setsockopt(zmq.RCVTIMEO, 120000)  # set timeout to 120 seconds
+        self.zmq_socket.setsockopt(zmq.LINGER, 0)
+        self.zmq_socket.bind(self.get_zmq_address(generation_group))
+        self.zmq_sockets[generation_group] = self.zmq_socket
 
     def get_free_memory_bytes(self) -> int:
         """Get the available free memory."""
@@ -303,7 +325,8 @@ class AbstractPolicyWorker:
         try:
             # Clean up extension resources like ZMQ sockets
             if hasattr(self, "zmq_socket"):
-                self.zmq_socket.close()
+                for socket in self.zmq_sockets.values():
+                    socket.close()
                 self.zmq_context.term()
             return True
         except Exception:

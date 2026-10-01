@@ -35,6 +35,8 @@ class _ReferenceDiffusionSampling:
     """Keep native lifecycle/refit; specialize the reference fork's diffusion API."""
 
     def _create_engine(self, llm_kwargs: dict[str, Any]) -> None:
+        if llm_kwargs.get("diffusion_config") is None:
+            return super()._create_engine(llm_kwargs)
         from vllm.config.diffusion import DiffusionConfig
 
         if "leftmost" not in str(
@@ -55,6 +57,8 @@ class _ReferenceDiffusionSampling:
         params = super()._build_sampling_params(
             greedy=greedy, stop_strings=stop_strings, max_new_tokens=max_new_tokens
         )
+        if self.cfg["vllm_kwargs"]["diffusion_config"] is None:
+            return params
         # The reference fork uses 1 as a sentinel for engine-level temperature.
         # logprobs=0 returns sampled-token scores at commitment; top-k scores
         # instead describe the final canvas and cannot be used for GRPO.
@@ -71,7 +75,7 @@ class _ReferenceDiffusionSampling:
         padded_length: int,
     ) -> dict[str, torch.Tensor]:
         diffusion = self.cfg["vllm_kwargs"]["diffusion_config"]
-        if not diffusion["return_reveal_steps"]:
+        if diffusion is None or not diffusion["return_reveal_steps"]:
             return {}
         recorded = completion.reveal_steps
         if recorded is None or len(recorded) != len(completion.token_ids):
@@ -95,7 +99,7 @@ class _ReferenceDiffusionSampling:
         if len(data["input_lengths"]) and (
             int(data["input_lengths"].max())
             + self.cfg["max_new_tokens"]
-            + diffusion["canvas_length"]
+            + (diffusion["canvas_length"] if diffusion is not None else 0)
             > self.cfg["vllm_cfg"]["max_model_len"]
         ):
             raise ValueError(

@@ -320,3 +320,108 @@ Artifacts: `/lustre/fsw/portfolios/coreai/users/snorouzi/runs/diffusion_rl/just_
 CPU tests cover denoising schedules against independent serial canvases, Fast selection, score aggregation, PyTorch sampling, rotary precision, configuration inheritance, environment rewards, and upstream rollout contracts. Megatron tests cover processors, same-position gradients, native worker lifecycle, and original-batch metric normalization.
 
 TP=2 verification is deferred (P1). The native-iterator GPU smoke above used TP=1. Upstream unmodified vLLM/SGLang leftmost diffusion generation and long-run PyTorch throughput/convergence are not established by these checks.
+
+
+## Multi-mode AR/diffusion validation (2026-09-29)
+
+Added named, dedicated vLLM validation engines to the shared research driver for
+synchronous colocated JustGRPO and TraceGRPO runs. Every mode
+refits from current policy weights, uses the same validation dataloader state,
+and reports suffixed metrics. The first mode also owns unsuffixed metrics and
+sample artifacts. Engines sleep between passes and use separate ZMQ IPC sockets;
+the legacy rollout socket remains unchanged. Other layouts fail during config
+validation. Runnable dual-validation recipes and a reusable YAML override are
+included; existing recipes keep their previous behavior.
+
+Validation: **274 passed, one optional Megatron Bridge module skipped** across
+both research unit suites and `tests/unit/weight_sync/test_weight_synchronizer.py`.
+The tests cover real controller factory dispatch and worker reservations, config
+composition, AR sampling, primary/per-mode metrics, paired prompts, failure
+cleanup, and namespace propagation/socket lifecycle. GPU services are mocked in
+these tests. Ruff check/format, Python syntax, and `git diff --check` passed.
+The provisioned reference fork registers `NemotronLabsDiffusionForCausalLM`.
+No GPU smoke or cluster submission was performed for this change.
+
+```bash
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=research/just_grpo:research/trace_grpo:. \
+uv run --no-cache --no-project \
+  --python /lustre/fsw/portfolios/coreai/users/snorouzi/nemorl_test_venvs/justgrpo_unit/bin/python \
+  python -m pytest research/just_grpo/tests/unit research/trace_grpo/tests/unit \
+  tests/unit/weight_sync/test_weight_synchronizer.py -q -o addopts= \
+  -p no:cacheprovider --confcutdir=tests/unit/weight_sync
+```
+
+
+## Async multi-mode AR/diffusion validation (2026-09-29)
+
+The shared multi-mode runner now supports dedicated async reference-vLLM engines.
+The collector atomically gates new launches and drains active rollouts before
+validation. Each validation engine uses a named NCCL collective, preserving the
+rollout communicator. Engines share the inference GPUs through explicit sleep/wake;
+colocated synchronous runs retain IPC refits. Both algorithms have async dualval
+recipes. No step-distillation config is added.
+
+CPU verification: **290 passed, one optional Megatron Bridge module skipped** in
+the research/weight-sync suite above; **27 passed** in the targeted async collector
+and multi-mode suite (overlapping tests). Tests cover pause/launch races, draining,
+named communicator isolation, non-colocated lifecycle, configuration, and inference
+worker reservations. Ruff check/format and `git diff --check` passed.
+
+GPU verification: Trace job **19531544** and JustGRPO job **19531546** both completed
+with exit code **0** on `batch` / `coreai_dlalgo_llm`. Each used one training GPU and
+one inference GPU, ran two optimizer updates with finite nonzero gradient norms,
+and completed diffusion and AR validation at steps **0, 1, and 2**, with eight
+validation samples per mode. Rollouts resumed after validation. Both batch drivers
+checked that imports resolved to this checkout. These are lifecycle smokes, not
+convergence measurements or multi-node scaling tests. Named metric routing is
+covered by unit tests; W&B and TensorBoard were disabled in the GPU smokes.
+
+The first attempt, **19531262**, failed at the rollout NCCL initialization before
+validation because the two provisioned interpreters loaded different NCCL libraries.
+Retries preload the vLLM runtime's `libnccl.so.2` on both sides. FlashInfer's cache
+was moved to job-local scratch. The reference fork emits CuMemAllocator teardown
+errors for sleeping workers; both retry drivers nevertheless exited successfully.
+
+Resolved configs, submission scripts, source patch/hashes, logs, primary validation
+samples, and machine-checked `smoke-results.json` are under:
+`/lustre/fsw/portfolios/coreai/users/snorouzi/runs/diffusion_rl/async_dualval_smoke_20260929_162134/`.
+
+
+## Sync/async AR GRPO and Trace validation matrix (2026-09-29)
+
+All four two-GPU Sudoku smokes completed with Slurm exit code 0:
+
+| Training algorithm | Generation | Job |
+| --- | --- | --- |
+| AR GRPO | Sync, colocated | 19532887 |
+| AR GRPO | Async, dedicated inference GPU | 19532888 |
+| TraceGRPO | Sync, colocated | 19532431 |
+| TraceGRPO | Async, dedicated inference GPU | 19532432 |
+
+Every run completed two optimizer updates and both `diffusion_conf09` and `ar`
+validation at steps 0, 1, and 2 (eight samples per mode). The result checker reads
+TensorBoard events and asserts both modes' accuracy/average-length metrics at all
+three steps, finite loss/gradient norms at both training steps, and nonzero
+training gradients. This covers rollout resumption and repeated IPC/NCCL refits.
+
+AR uses a run-local smoke harness around upstream GRPO and the same
+`MultiModeValidation` runner. Its policy adapter reuses the causal-attention
+adapter from `diffusion_RL`, with the research checkout's checkpoint-config
+registration. The harness asserts causal rollout architecture after setup and
+uses `shift_labels=True`; worker logs confirm causal attention in all 26 layers.
+This tests AR GRPO through the shared validation API; it does not add an AR
+entrypoint to the diffusion research driver. Trace uses the existing research
+entrypoint and recipes.
+
+Testing exposed core setup overwriting explicit vLLM `hf_overrides` with policy
+defaults, which could erase `NemotronLabsDiffusionForCausalLM`. Setup now merges
+policy defaults with explicit inference overrides taking precedence. The nine
+upstream integration tests pass, including an architecture-preservation regression;
+Ruff and `git diff --check` pass. The initial AR harness attempts stopped before
+training on a task-config mismatch, then on a missing in-container CUDA compatibility
+library path; both harness issues were corrected before the successful jobs above.
+
+Artifacts, resolved configs, submission commands, the AR harness/adapter, source
+snapshots, TensorBoard events, and the machine-checked `smoke-results.json` are in:
+`/lustre/fsw/portfolios/coreai/users/snorouzi/runs/diffusion_rl/multimode_matrix_smoke_20260929_164939/`.

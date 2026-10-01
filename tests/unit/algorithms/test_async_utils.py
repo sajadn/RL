@@ -1497,6 +1497,7 @@ class TestAsyncTrajectoryCollector:
         replay_buffer = mock.MagicMock()
         replay_buffer.get_trajectories_needed.remote.return_value = 2
         collector = self.create_local_collector(replay_buffer=replay_buffer)
+        collector.running = True
         collector._refit_pause_cleared.set()
         collector._get_next_target_for_generation = lambda version: 1
         monkeypatch.setattr(
@@ -1762,6 +1763,7 @@ class TestAsyncTrajectoryCollector:
         replay_buffer = mock.MagicMock()
         replay_buffer.get_trajectories_needed.remote.return_value = 2
         collector = self.create_local_collector(replay_buffer=replay_buffer)
+        collector.running = True
         collector._refit_pause_cleared.set()
         collector._get_next_target_for_generation = lambda version: 1
         monkeypatch.setattr(

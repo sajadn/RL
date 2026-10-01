@@ -1,0 +1,25 @@
+defaults:
+  - ./just_grpo-sudoku6x6-4n8g-megatron-inference-long.yaml
+  - ../validation/ar_diffusion.yaml
+just_grpo:
+  runtime: reference_vllm
+policy:
+  generation:
+    backend: vllm
+    refit_transport: null
+    worker_extension_cls_fqn: just_grpo.generation.reference_vllm.ReferenceVllmWorker
+    vllm_cfg:
+      async_engine: false
+    vllm_kwargs:
+      diffusion_config:
+        canvas_length: ${just_grpo.sampling.block_size}
+        max_denoising_steps: ${just_grpo.sampling.max_steps}
+        temperature: ${just_grpo.sampling.temperature}
+        selection_policy: ${just_grpo.sampling.selection_policy}
+        confidence_threshold: ${just_grpo.sampling.threshold}
+        return_entropy: ${just_grpo.sampling.returns_entropy}
+        return_reveal_steps: ${just_grpo.sampling.returns_reveal_steps}
+logger:
+  log_dir: results/just_grpo_sudoku6x6_vllm_dualval
+  wandb:
+    name: ${oc.env:WANDB_RUN_NAME,just_grpo_sudoku6x6_vllm_dualval}

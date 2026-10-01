@@ -1338,7 +1338,14 @@ class VllmGenerationWorkerImpl(VllmCheckpointEngineRpcMixin, BaseVllmGenerationW
 
     def prepare_refit_info(self, state_dict_info: dict[str, Any]) -> None:
         """Prepare the info for refit."""
-        self.llm.collective_rpc("prepare_refit_info", args=(state_dict_info,))
+        kwargs = (
+            {"generation_group": self.cfg["refit_namespace"]}
+            if self.cfg.get("refit_namespace")
+            else {}
+        )
+        self.llm.collective_rpc(
+            "prepare_refit_info", args=(state_dict_info,), kwargs=kwargs
+        )
 
     @wrap_with_nvtx_name("vllm_genertion_worker/update_weights_via_ipc_zmq")
     def update_weights_via_ipc_zmq(self) -> bool:

@@ -3029,9 +3029,9 @@ class MegatronPolicyWorkerImpl(
             return None
         return parse_nvfp4_pertoken_rollout(cast(VllmConfig, generation_cfg))
 
-    def maybe_init_zmq(self) -> None:
+    def maybe_init_zmq(self, generation_group: Optional[str] = None) -> None:
         """Allow extra time for the first quantized refit and kernel autotune."""
-        super().maybe_init_zmq()
+        super().maybe_init_zmq(generation_group)
         if self._nvfp4_pertoken_rollout_cfg() is not None:
             import zmq
 
@@ -3375,10 +3375,13 @@ class MegatronPolicyWorkerImpl(
     @torch.no_grad()
     @wrap_with_nvtx_name("megatron_policy_worker/stream_weights_via_ipc_zmq")
     def stream_weights_via_ipc_zmq(
-        self, buffer_size_bytes: int = 0, kv_scales: Optional[dict[str, float]] = None
+        self,
+        buffer_size_bytes: int = 0,
+        kv_scales: Optional[dict[str, float]] = None,
+        generation_group: Optional[str] = None,
     ) -> None:
-        """Stream model weights to peer process via ZMQ IPC socket."""
-        self.maybe_init_zmq()
+        """Stream model weights to the selected engine group via ZMQ IPC."""
+        self.maybe_init_zmq(generation_group)
 
         from nemo_rl.models.policy.utils import stream_weights_via_ipc_zmq_impl
 
@@ -3401,6 +3404,7 @@ class MegatronPolicyWorkerImpl(
         *,
         buffer_size_bytes: Optional[int] = None,
         num_buffers: Optional[int] = None,
+        generation_group: Optional[str] = None,
     ) -> None:
         """Broadcast the weights for collective communication.
 
@@ -3416,11 +3420,13 @@ class MegatronPolicyWorkerImpl(
             RefitAbortWatchdog,
         )
 
-        with RefitAbortWatchdog(self.model_update_group, refit_timeout_s) as guard:
+        group = self.get_model_update_group(generation_group)
+        with RefitAbortWatchdog(group, refit_timeout_s) as guard:
             self._broadcast_weights_for_collective(
                 kv_scales=kv_scales,
                 buffer_size_bytes=buffer_size_bytes,
                 num_buffers=num_buffers,
+                **({"generation_group": generation_group} if generation_group else {}),
             )
         if guard.fired:
             # The aborted collective returned cleanly, so this is the only signal there is.
@@ -3435,11 +3441,12 @@ class MegatronPolicyWorkerImpl(
         *,
         buffer_size_bytes: Optional[int] = None,
         num_buffers: Optional[int] = None,
+        generation_group: Optional[str] = None,
     ) -> None:
         # param_iterator will return (name, tensor), we only need tensor.
         packed_broadcast_producer(
             iterator=self._iter_params_with_optional_kv_scales(kv_scales=kv_scales),
-            group=self.model_update_group,
+            group=self.get_model_update_group(generation_group),
             src=0,
             post_iter_func=lambda x: x[1],
             buffer_size_bytes=buffer_size_bytes,

@@ -1252,6 +1252,27 @@ class VllmGeneration(GenerationInterface):
         ):
             yield result
 
+    def sleep(self) -> bool:
+        """Release GPU memory even on a dedicated inference cluster."""
+        return self._run_sleep_or_wake(
+            "sleep_async" if self.cfg["vllm_cfg"]["async_engine"] else "sleep"
+        )
+
+    def wake_up(self, **kwargs: Any) -> bool:
+        """Restore memory for an explicitly slept engine group."""
+        return self._run_sleep_or_wake(
+            "wake_up_async" if self.cfg["vllm_cfg"]["async_engine"] else "wake_up",
+            **kwargs,
+        )
+
+    def _run_sleep_or_wake(self, method_name: str, **kwargs: Any) -> bool:
+        futures = self.worker_group.run_all_workers_single_data(
+            method_name,
+            run_rank_0_only_axes=["tensor_parallel", "pipeline_parallel"],
+            **kwargs,
+        )
+        return all(result for result in ray.get(futures) if result is not None)
+
     def prepare_for_generation(self, *args: Any, **kwargs: Any) -> bool:
         """Wake workers up for colocated inference."""
         # non-colocated no need to wake up

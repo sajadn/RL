@@ -523,3 +523,18 @@ def test_trace_entrypoint_supplies_batch_preparation(
     monkeypatch.setattr(driver, "run", run)
     trace_train.run(raw)
     assert captured == [raw]
+
+
+@pytest.mark.parametrize("async_mode", [False, True])
+def test_trace_dual_validation_recipes(async_mode: bool) -> None:
+    register_omegaconf_resolvers()
+    suffix = "-async" if async_mode else ""
+    raw = load_config(
+        Path(__file__).parents[2]
+        / f"configs/recipes/trace_grpo-sudoku6x6-4n8g-megatron-vllm{suffix}-dualval-long.yaml"
+    )
+    validate_config(raw)
+    assert list(raw.policy.generation.vllm_val_dllm_variants) == [
+        "diffusion_conf09",
+        "ar",
+    ]

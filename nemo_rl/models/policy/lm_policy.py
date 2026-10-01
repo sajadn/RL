@@ -541,6 +541,7 @@ class Policy(ColocatablePolicyInterface, GenerationInterface):
         train_world_size: int,
         rank_offset: int = 0,
         nccl_peer: str = "nemo",
+        generation_group: Optional[str] = None,
     ) -> list[ray.ObjectRef]:
         """Initialize the collective communication."""
         futures = self.worker_group.run_all_workers_single_data(
@@ -551,6 +552,7 @@ class Policy(ColocatablePolicyInterface, GenerationInterface):
             train_world_size=train_world_size,
             rank_offset=rank_offset,
             nccl_peer=nccl_peer,
+            **({"generation_group": generation_group} if generation_group else {}),
         )
         # this function should co-work with vllm, so we should wait for all futures to complete outside
         return futures
@@ -1211,13 +1213,17 @@ class Policy(ColocatablePolicyInterface, GenerationInterface):
         return free_memory_bytes
 
     def stream_weights_via_ipc_zmq(
-        self, buffer_size_bytes: int, kv_scales: Optional[dict[str, float]] = None
+        self,
+        buffer_size_bytes: int,
+        kv_scales: Optional[dict[str, float]] = None,
+        generation_group: Optional[str] = None,
     ) -> list[ray.ObjectRef]:
-        """Send the weights for IPC handles via ZMQ socket."""
+        """Send weights to one engine group (legacy address when unset)."""
         futures = self.worker_group.run_all_workers_single_data(
             "stream_weights_via_ipc_zmq",
             buffer_size_bytes=buffer_size_bytes,
             kv_scales=kv_scales,
+            **({"generation_group": generation_group} if generation_group else {}),
         )
         return futures
 
@@ -1300,6 +1306,7 @@ class Policy(ColocatablePolicyInterface, GenerationInterface):
         *,
         buffer_size_bytes: Optional[int] = None,
         num_buffers: Optional[int] = None,
+        generation_group: Optional[str] = None,
     ) -> list[ray.ObjectRef]:
         """Broadcast the weights for collective communication."""
         futures = self.worker_group.run_all_workers_single_data(
@@ -1308,6 +1315,7 @@ class Policy(ColocatablePolicyInterface, GenerationInterface):
             refit_timeout_s=refit_timeout_s,
             buffer_size_bytes=buffer_size_bytes,
             num_buffers=num_buffers,
+            **({"generation_group": generation_group} if generation_group else {}),
         )
         # this function should co-work with vllm, so we should wait for all futures to complete outside
         return futures

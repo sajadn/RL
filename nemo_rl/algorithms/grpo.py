@@ -506,6 +506,8 @@ def setup(
     val_dataset: Optional[AllTaskProcessedDataset],
     processor: Optional[AutoProcessor] = None,
     policy_factory: Optional[Callable[..., ColocatablePolicyInterface]] = None,
+    vllm_generation_factory: Optional[Callable[..., GenerationInterface]] = None,
+    additional_colocated_worker_groups: int = 0,
 ) -> tuple[
     ColocatablePolicyInterface,
     Optional[GenerationInterface],
@@ -906,9 +908,10 @@ def setup(
             bundle_ct_per_node_list=[policy_gpus_per_node] * policy_nodes,
             use_gpus=True,
             num_gpus_per_node=policy_gpus_per_node,
-            max_colocated_worker_groups=1
-            if generation_config["backend"] == "megatron"
-            else 2,
+            max_colocated_worker_groups=(
+                1 if generation_config["backend"] == "megatron" else 2
+            )
+            + additional_colocated_worker_groups,
             port_range_low=cluster_config.get("master_port_range_low"),
             port_range_high=cluster_config.get("master_port_range_high"),
             segment_size=segment_size,
@@ -1125,7 +1128,7 @@ def setup(
             bundle_ct_per_node_list=[inference_gpus_per_node] * inference_nodes,
             use_gpus=True,
             num_gpus_per_node=inference_gpus_per_node,
-            max_colocated_worker_groups=1,
+            max_colocated_worker_groups=1 + additional_colocated_worker_groups,
             port_range_low=cluster_config.get("master_port_range_low"),
             port_range_high=cluster_config.get("master_port_range_high"),
             segment_size=inference_segment_size,
@@ -1271,7 +1274,8 @@ def setup(
     def init_vllm():
         """Initialize vLLM generation workers."""
         t0 = time.perf_counter()
-        pg = VllmGeneration(cluster=inference_cluster, config=generation_config)
+        factory = vllm_generation_factory or VllmGeneration
+        pg = factory(cluster=inference_cluster, config=generation_config)
         pg.finish_generation()
         return pg, time.perf_counter() - t0
 
@@ -1535,8 +1539,12 @@ def setup(
         configure_vllm_for_router_replay(policy_config)
         vllm_kwargs = generation_config.setdefault("vllm_kwargs", {})
 
-        ## make vllm hf overrides match the training policy
-        vllm_kwargs["hf_overrides"] = policy_config.get("hf_config_overrides", {})
+        # Inherit policy defaults while preserving explicit inference architecture
+        # overrides (e.g. causal rollout from a diffusion checkpoint).
+        vllm_kwargs["hf_overrides"] = {
+            **(policy_config.get("hf_config_overrides") or {}),
+            **(vllm_kwargs.get("hf_overrides") or {}),
+        }
 
         if enable_nemo_gym:
             # ---- NeMo Gym: reserve vLLM ports up-front so we can hand the
@@ -2908,8 +2916,12 @@ def _grpo_train_impl(
         Callable[[BatchedDataDict, list[LLMMessageLogType], int], None]
     ] = None,
     shift_labels: bool = True,
+    validation_fn: Optional[
+        Callable[..., tuple[dict[str, Any], dict[str, Any]]]
+    ] = None,
 ) -> None:
-    """Run GRPO; optionally prepare algorithm batch fields once before scoring."""
+    """Run GRPO with optional research batch-preparation and validation hooks."""
+    run_validation = validation_fn or validate
     timer = Timer(context={"worker": "driver"})
     _telemetry = get_telemetry_handle()
     _tracer = _telemetry.tracer if _telemetry is not None else None
@@ -2973,7 +2985,7 @@ def _grpo_train_impl(
             POLICY_GENERATION_STALE = False
         else:
             policy_generation.prepare_for_generation()
-        val_metrics, validation_timings = validate(
+        val_metrics, validation_timings = run_validation(
             policy_generation,
             val_dataloader,
             tokenizer,
@@ -3654,7 +3666,7 @@ def _grpo_train_impl(
                         if colocated_inference:
                             policy.offload_after_refit()  # unload optimizer to make space for generation
                         policy_generation.prepare_for_generation()
-                    val_metrics, validation_timings = validate(
+                    val_metrics, validation_timings = run_validation(
                         policy_generation,
                         val_dataloader,
                         tokenizer,
@@ -4103,6 +4115,9 @@ def grpo_train(
         Callable[[BatchedDataDict, list[LLMMessageLogType], int], None]
     ] = None,
     shift_labels: bool = True,
+    validation_fn: Optional[
+        Callable[..., tuple[dict[str, Any], dict[str, Any]]]
+    ] = None,
 ) -> None:
     """Run GRPO training and always tear down its environments."""
     try:
@@ -4122,6 +4137,7 @@ def grpo_train(
             processor=processor,
             prepare_training_data_fn=prepare_training_data_fn,
             shift_labels=shift_labels,
+            validation_fn=validation_fn,
         )
     finally:
         shutdown_environments(task_to_env, val_task_to_env)
@@ -4508,6 +4524,9 @@ def async_grpo_train(
         Callable[[BatchedDataDict, list[LLMMessageLogType], int], None]
     ] = None,
     shift_labels: bool = True,
+    validation_fn: Optional[
+        Callable[..., tuple[dict[str, Any], dict[str, Any]]]
+    ] = None,
 ) -> None:
     """Run asynchronous GRPO training with replay buffer.
 
@@ -4849,11 +4868,14 @@ def async_grpo_train(
     if val_at_start and step == 0:
         print("\n🔍 Running initial validation...")
         # Pause trajectory collection during initial validation
-        ray.get(trajectory_collector.pause.remote())
+        if validation_fn is not None:
+            ray.get(trajectory_collector.pause_and_drain.remote())
+        else:
+            ray.get(trajectory_collector.pause.remote())
 
         initial_val_metrics: Optional[dict[str, Any]] = None
         try:
-            val_metrics, validation_timings = validate(
+            val_metrics, validation_timings = (validation_fn or validate)(
                 policy_generation,
                 val_dataloader,
                 tokenizer,
@@ -4883,10 +4905,15 @@ def async_grpo_train(
             import traceback
 
             traceback.print_exc()
+            # A custom validator may fail to restore its rollout engines.
+            # Do not resume background work onto an unsafe engine state.
+            if validation_fn is not None:
+                raise
             # Continue anyway since validation is optional
         finally:
             # Resume trajectory collection after initial validation
-            trajectory_collector.resume.remote()
+            if validation_fn is None or initial_val_metrics is not None:
+                trajectory_collector.resume.remote()
 
         stop_message = (
             _validation_early_stop_message(
@@ -5544,7 +5571,10 @@ def async_grpo_train(
                 if should_run_validation:
                     # Stop new dispatch before separating the training and
                     # validation payload-metric intervals.
-                    ray.get(trajectory_collector.pause.remote())
+                    if validation_fn is not None:
+                        ray.get(trajectory_collector.pause_and_drain.remote())
+                    else:
+                        ray.get(trajectory_collector.pause.remote())
                     if master_config.grpo.debug_payload_metrics:
                         payload_metrics = merge_multimodal_payload_metrics(
                             [
@@ -5568,7 +5598,7 @@ def async_grpo_train(
                         # No-op on an already-running engine;
                         # wakes the colocated engine when it stayed asleep for a save-bound step.
                         policy_generation.prepare_for_generation()
-                        val_metrics, validation_timings = validate(
+                        val_metrics, validation_timings = (validation_fn or validate)(
                             policy_generation,
                             val_dataloader,
                             tokenizer,

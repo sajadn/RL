@@ -21,6 +21,7 @@ import ray
 from omegaconf import DictConfig, OmegaConf
 
 from just_grpo.diffusion.config import DiffusionExperimentConfig
+from just_grpo.generation.validation import MultiModeValidation, validation_variants
 
 from nemo_rl.data.interfaces import LLMMessageLogType
 from nemo_rl.distributed.batched_data_dict import BatchedDataDict
@@ -95,13 +96,29 @@ def run(
     val_data = SudokuResponseDataset(config, tokenizer, validation=True)
     env = SudokuEnvironment.remote()
     environments = {config.data.default.env_name: env}
+    variants = validation_variants(master.policy["generation"])
+    validation = (
+        MultiModeValidation(
+            variants, colocated=master.policy["generation"]["colocated"]["enabled"]
+        )
+        if variants
+        else None
+    )
+    setup_kwargs = (
+        {
+            "vllm_generation_factory": validation.create_generation,
+            "additional_colocated_worker_groups": len(variants),
+        }
+        if validation is not None
+        else {}
+    )
     logger = generation = None
     try:
         (
             policy,
             generation,
             _,
-            _,
+            clusters,
             dataloader,
             val_dataloader,
             loss_fn,
@@ -111,7 +128,14 @@ def run(
             master,
             _,
             _,
-        ) = setup(master, tokenizer, train_data, val_data)
+        ) = setup(master, tokenizer, train_data, val_data, **setup_kwargs)
+        if validation is not None:
+            validation.initialize(
+                policy,
+                train_cluster=clusters[0],
+                inference_cluster=clusters[1],
+                refit_buffer_size_gb=master.policy.get("refit_buffer_size_gb"),
+            )
         if diffusion.runtime == "megatron":
             # Colocated setup has not started an engine (HTTP serving is disabled).
             generation.shutdown()
@@ -131,6 +155,8 @@ def run(
             if master.grpo.async_grpo.enabled
             else {}
         )
+        if validation is not None:
+            trainer_kwargs["validation_fn"] = validation
         if logger.wandb_logger is not None:
             (output / "wandb_url.txt").write_text(logger.wandb_logger.run.url + "\n")
         if prepare_training_data_factory is not None:
@@ -155,6 +181,8 @@ def run(
                 **trainer_kwargs,
             )
     finally:
+        if validation is not None:
+            validation.shutdown()
         if generation is not None:
             generation.shutdown()
         if logger is not None:

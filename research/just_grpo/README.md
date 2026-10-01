@@ -2,7 +2,7 @@
 
 Research implementation on upstream NeMo-RL `main` (`612d5274059c821dc09c2c90767b546b6f2d50b5`), based on the [diffusion design document](https://docs.google.com/document/d/1HHzRpLfsRalQkqLGFe0vljZjRO7dwKaKWH43jZPxCu4/edit) and the [Flow GRPO research structure](https://github.com/triple-mu/RL/pull/1). The algorithm, 6x6 Sudoku generator, and few-shot prompt come from the Block JustGRPO reference implementation.
 
-**Training uses Megatron only.** Generation can use the reference diffusion vLLM runtime or the in-process Megatron diffusion decoder. Both use the same driver, denoising schedule, loss, and single validation mode inherited from training. All experiment defaults live in YAML, inheriting `examples/configs/grpo_math_1B.yaml`.
+**Training uses Megatron only.** Generation can use the reference diffusion vLLM runtime or the in-process Megatron diffusion decoder. Both use the same driver, denoising schedule, loss, and default validation mode inherited from training. Reference vLLM also supports the named AR/diffusion validation modes described below. All experiment defaults live in YAML, inheriting `examples/configs/grpo_math_1B.yaml`.
 
 ## Upstream controller
 
@@ -10,7 +10,7 @@ Research implementation on upstream NeMo-RL `main` (`612d5274059c821dc09c2c90767
 driver. Shared runtime validation lives in `just_grpo/diffusion/validation.py`;
 algorithm-specific configuration stays in `just_grpo/config.py`.
 
-`just_grpo/diffusion/train.py` imports `setup()`, `grpo_train()`, and `async_grpo_train()` from `nemo_rl.algorithms.grpo`. Upstream owns Ray worker placement, data loading, rollout collection, GRPO advantages, validation, logging, and the training loop. Research code supplies the Sudoku data/environment and a `MegatronDiffusionGeneration` implementation of the existing `GenerationInterface`. vLLM uses upstream `VllmGeneration` directly. Setup constructs upstream `Policy` directly; the recipe selects `BlockJustGRPOPolicyWorker` through the existing `policy.worker_extension_cls_fqn` setting. The shared driver registers its runtime and passes the research configuration to the worker. For Megatron inference, the shared driver replaces the native generation wrapper after ordinary upstream setup and attaches a native colocated weight synchronizer. HTTP serving is disabled, so setup has not started an AR engine. There is no generation-factory hook in core. vLLM retains its native setup path. Rollout logprobs are included in scoring inputs for Fast token selection. Previous-policy logprobs are always recomputed through upstream `Policy.get_logprobs()`.
+`just_grpo/diffusion/train.py` imports `setup()`, `grpo_train()`, and `async_grpo_train()` from `nemo_rl.algorithms.grpo`. Upstream owns Ray worker placement, data loading, rollout collection, GRPO advantages, validation, logging, and the training loop. Research code supplies the Sudoku data/environment and a `MegatronDiffusionGeneration` implementation of the existing `GenerationInterface`. vLLM uses upstream `VllmGeneration` directly. Setup constructs upstream `Policy` directly; the recipe selects `BlockJustGRPOPolicyWorker` through the existing `policy.worker_extension_cls_fqn` setting. The shared driver registers its runtime and passes the research configuration to the worker. For Megatron inference, the shared driver replaces the native generation wrapper after ordinary upstream setup and attaches a native colocated weight synchronizer. HTTP serving is disabled, so setup has not started an AR engine. Without named validation modes, vLLM retains its native setup path; multi-mode validation supplies a generation factory to upstream setup. Rollout logprobs are included in scoring inputs for Fast token selection. Previous-policy logprobs are always recomputed through upstream `Policy.get_logprobs()`.
 
 ## Diffusion training
 
@@ -95,8 +95,49 @@ The reference seeds (training 1, validation 2) produce overlapping puzzles becau
 
 ## Metrics and verification
 
-W&B uses upstream GRPO names, including `train/reward`, `train/kl_penalty`, `train/gen_kl_error`, `train/loss`, `train/grad_norm`, and ratio/importance metrics. `validation/accuracy` reports the mean environment reward. Validation has one mode inherited from training.
+W&B uses upstream GRPO names, including `train/reward`, `train/kl_penalty`, `train/gen_kl_error`, `train/loss`, `train/grad_norm`, and ratio/importance metrics. `validation/accuracy` reports the mean environment reward. By default, validation inherits the training decoder; named modes add suffixed metrics as described below.
 
 Metrics and timers come directly from upstream GRPO, including `timing/train/total_step_time`, generation, scoring, training, validation, and worker timings. `global_valid_toks` counts selected training tokens. Upstream writes rollout JSONL files; `wandb_url.txt` contains the tracking link. The former custom `metrics.json` format is replaced by upstream logging.
 
 See [VERIFICATION.md](VERIFICATION.md) for recorded Megatron checks and their scope.
+
+
+## AR and diffusion validation
+
+Synchronous colocated and asynchronous dedicated-GPU `reference_vllm` runs support
+named validation modes through
+`policy.generation.vllm_val_dllm_variants`, matching the engine-override format in
+`diffusion_RL`.
+The reusable override is `configs/validation/ar_diffusion.yaml`; add it after your
+recipe in the YAML `defaults` list. Runnable examples end in
+`-megatron-vllm-dualval-long.yaml` under `configs/recipes/`. Async examples end in
+`-megatron-vllm-async-dualval-long.yaml`; their 32 GPUs are split evenly between
+training and generation.
+
+The example evaluates each current policy under confidence-threshold diffusion
+(block size 16, 16 steps, threshold 0.9, temperature 1) and causal AR (temperature
+1). Each mode uses the same validation prompts and budget. W&B records
+`validation/accuracy/diffusion_conf09`, `validation/accuracy/ar`, and corresponding
+`avg_length` metrics. The first configured mode also supplies `validation/accuracy`
+and the primary `val_data_step*.jsonl` samples. Where checkpointing is enabled,
+`checkpointing.metric_name: val:accuracy/ar` selects by AR accuracy; the research
+checkpointing restrictions otherwise remain in force.
+
+Each named mode must specify `temperature`, `vllm_cfg.gpu_memory_utilization`, and
+`vllm_kwargs` with `hf_overrides.architectures` and `diffusion_config`. AR uses
+`[NemotronLabsDiffusionForCausalLM]` and `diffusion_config: null`. Diffusion uses
+`[NemotronLabsDiffusionModel]`, matching `hf_overrides.block_size` and
+`diffusion_config.canvas_length`, and explicitly pinned sampling knobs. Extra
+training-only reveal/entropy channels are disabled for validation. With no variants
+configured, the existing `validation_sampling` behavior is unchanged.
+
+Validation groups initialize before rollout workers and sleep between passes.
+Every pass refits from current policy weights using a separate IPC socket for
+colocated runs or a named NCCL collective for dedicated generation GPUs. Async
+collection pauses and drains active rollouts before switching engines, then resumes
+after validation. Worker registration and launch are atomic with the pause gate,
+so a pending launch cannot race engine sleep. Rollout engines are restored even
+if validation raises. The groups share generation GPU memory sequentially but
+consume extra CPU memory for sleeping model weights.
+Megatron generation and non-default refit transports are rejected for this option.
+This port does not add runtime sampler reconfiguration or the SGLang variant format.

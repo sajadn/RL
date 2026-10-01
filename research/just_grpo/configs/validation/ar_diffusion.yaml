@@ -1,0 +1,30 @@
+# First mode owns validation/accuracy and primary validation samples.
+policy:
+  generation:
+    vllm_val_dllm_variants:
+      diffusion_conf09:
+        temperature: 1.0
+        vllm_cfg:
+          gpu_memory_utilization: 0.55
+        vllm_kwargs:
+          hf_overrides:
+            architectures: [NemotronLabsDiffusionModel]
+            block_size: 16
+          diffusion_config:
+            canvas_length: 16
+            max_denoising_steps: 16
+            selection_policy: confidence_threshold
+            confidence_threshold: 0.9
+            temperature: 1.0
+            emit_full_blocks: false
+            return_reveal_steps: false
+            return_entropy: false
+      ar:
+        temperature: 1.0
+        vllm_cfg:
+          gpu_memory_utilization: 0.55
+        vllm_kwargs:
+          hf_overrides:
+            architectures: [NemotronLabsDiffusionForCausalLM]
+            block_size: 16
+          diffusion_config: null

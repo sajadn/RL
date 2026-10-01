@@ -610,8 +610,10 @@ class VllmInternalWorkerExtension(RefitBuilderInterface):
         return socket.gethostname()
 
     def get_zmq_address(self):
-        """Get the ZMQ address for the current device."""
-        return f"ipc:///tmp/{self.report_device_id()}.sock"
+        """Match the policy sender's per-engine IPC address."""
+        group = getattr(self, "generation_group", None)
+        prefix = f"{group}-" if group else ""
+        return f"ipc:///tmp/{prefix}{self.report_device_id()}.sock"
 
     def maybe_init_zmq(self):
         """Initialize the ZMQ socket if it doesn't exist."""
@@ -629,7 +631,9 @@ class VllmInternalWorkerExtension(RefitBuilderInterface):
             self.zmq_socket.setsockopt(zmq.LINGER, 0)
             self.zmq_socket.connect(self.get_zmq_address())
 
-    def prepare_refit_info(self, state_dict_info: dict[str, Any]) -> None:
+    def prepare_refit_info(
+        self, state_dict_info: dict[str, Any], generation_group: str | None = None
+    ) -> None:
         """Prepare state dict metadata for weight refitting and IPC streaming.
 
         Args:
@@ -642,6 +646,7 @@ class VllmInternalWorkerExtension(RefitBuilderInterface):
                 by the native layerwise refit lifecycle).
         """
         self._validate_native_layerwise_refit()
+        self.generation_group = generation_group
         self.state_dict_info = state_dict_info  # pyrefly: ignore[implicitly-defined-attribute]  This class does not define __init__ so assignments like this should be ignored
 
     def prepare_sparse_delta_refit_info(

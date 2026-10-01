@@ -70,3 +70,12 @@ uv run --package trace-grpo --group test python -m pytest \
   -c research/trace_grpo/pyproject.toml research/trace_grpo/tests/unit \
   --confcutdir=research
 ```
+
+## AR and diffusion validation
+
+Reference-vLLM recipes ending in `-dualval-long.yaml` evaluate each checkpoint in
+both confidence-threshold diffusion and causal AR modes. Sync and async recipes
+use `policy.generation.vllm_val_dllm_variants`; the reusable override is
+`../just_grpo/configs/validation/ar_diffusion.yaml`. See the [shared validation behavior](../just_grpo/README.md#ar-and-diffusion-validation)
+for metric names and engine lifecycle, and [VERIFICATION.md](VERIFICATION.md)
+for recorded checks.

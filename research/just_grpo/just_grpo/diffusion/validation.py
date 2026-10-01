@@ -16,12 +16,20 @@
 from omegaconf import DictConfig, OmegaConf
 
 from just_grpo.diffusion.config import DiffusionExperimentConfig
+from just_grpo.generation.validation import validation_variants
 
 
 def validate_experiment(
     config: DictConfig, diffusion: DiffusionExperimentConfig
 ) -> None:
     """Validate the supported research subset of the upstream GRPO schema."""
+    variants = validation_variants(
+        OmegaConf.to_container(config.policy.generation, resolve=True)
+    )
+    if variants and config.policy.generation.refit_transport is not None:
+        raise ValueError("Multi-mode validation requires native IPC/NCCL refit")
+    if variants and diffusion.runtime != "reference_vllm":
+        raise ValueError("Multi-mode validation requires reference_vllm generation")
     g, p, loss = config.grpo, config.policy, config.loss_fn
     if loss.force_on_policy_ratio:
         raise ValueError(

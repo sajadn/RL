@@ -134,6 +134,7 @@ class CollectiveWeightSynchronizer(WeightSynchronizer):
                 refit_timeout_s=self._refit_timeout_s,
                 buffer_size_bytes=sender_spec.buffer_size_bytes,
                 num_buffers=sender_spec.num_buffers,
+                **self._generation_group_kwargs(),
             )
             futures_inference = self._generation.update_weights_from_collective(
                 refit_timeout_s=self._refit_timeout_s
@@ -166,6 +167,11 @@ class CollectiveWeightSynchronizer(WeightSynchronizer):
                 )
 
         self._stale = False
+
+    def _generation_group_kwargs(self) -> dict[str, str]:
+        """Keep legacy worker signatures unchanged for unnamed rollout groups."""
+        name = self._generation.cfg.get("refit_namespace")
+        return {"generation_group": name} if name else {}
 
     @property
     def is_stale(self) -> bool:
@@ -229,6 +235,7 @@ class CollectiveWeightSynchronizer(WeightSynchronizer):
             world_size,
             train_world_size=train_world_size,
             nccl_peer=sender_spec.nccl_peer,
+            **self._generation_group_kwargs(),
         )
         futures_inference = self._generation.init_collective(
             ip, port, world_size, train_world_size=train_world_size
@@ -343,6 +350,7 @@ class CollectiveWeightSynchronizer(WeightSynchronizer):
             membership.world_size,
             train_world_size=membership.train_world_size,
             nccl_peer=sender_spec.nccl_peer,
+            **self._generation_group_kwargs(),
         )
         futures_inference = self._generation.rebuild_collective(membership, ip, port)
         ray.get(futures_train + futures_inference)
