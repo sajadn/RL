@@ -388,6 +388,26 @@ class TestApplyTemperatureScaling:
 
         assert torch.allclose(result, original)
 
+    @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+    def test_temperature_scaling_preserves_fp32_logprobs_and_gradients(self, dtype):
+        """Deferred logits must be upcast before non-unit temperature division."""
+        from nemo_rl.models.megatron.train import apply_temperature_scaling
+
+        logits = torch.tensor(
+            [[20.0, 19.875, 19.625, 18.75]], dtype=dtype, requires_grad=True
+        )
+        params = TrainingSamplingParams(temperature=0.6)
+        result = apply_temperature_scaling(logits * 1.0, params)
+        expected = logits.float() / params.temperature
+
+        torch.testing.assert_close(result, expected)
+        actual_logprobs = result.log_softmax(-1)
+        expected_logprobs = expected.log_softmax(-1)
+        torch.testing.assert_close(actual_logprobs, expected_logprobs)
+        actual_grad = torch.autograd.grad(actual_logprobs[0, 2], logits)[0]
+        expected_grad = torch.autograd.grad(expected_logprobs[0, 2], logits)[0]
+        torch.testing.assert_close(actual_grad, expected_grad)
+
     def test_temperature_scaling_with_temperature_two(self):
         """Test that logits are divided by the configured temperature=2.0."""
         from nemo_rl.models.megatron.train import apply_temperature_scaling
@@ -589,7 +609,7 @@ class TestForwardWithPostProcessingFn:
             temperature=cfg["generation"]["temperature"]
         )
 
-        forward_with_post_processing_fn(
+        result, _ = forward_with_post_processing_fn(
             data_iterator=iter([processed_mb]),
             model=MagicMock(),
             post_processing_fn=post_processor,
@@ -598,6 +618,7 @@ class TestForwardWithPostProcessingFn:
 
         # Verify apply_temperature_scaling was called with the output tensor and cfg
         mock_temp_scaling.assert_called_once_with(output_tensor, sampling_params)
+        assert result is mock_temp_scaling.return_value
 
     @patch("nemo_rl.models.megatron.train.model_forward")
     @patch("nemo_rl.models.megatron.train.apply_temperature_scaling")
@@ -635,7 +656,7 @@ class TestForwardWithPostProcessingFn:
         )
 
         with patch.object(post_processor, "__call__", return_value=MagicMock()):
-            forward_with_post_processing_fn(
+            result, _ = forward_with_post_processing_fn(
                 data_iterator=iter([processed_mb]),
                 model=MagicMock(),
                 post_processing_fn=post_processor,
@@ -643,6 +664,7 @@ class TestForwardWithPostProcessingFn:
             )
 
         mock_temp_scaling.assert_called_once_with(output_tensor, sampling_params)
+        assert result is mock_temp_scaling.return_value
 
     @patch("nemo_rl.models.megatron.train.model_forward")
     @patch("nemo_rl.models.megatron.train.apply_temperature_scaling")

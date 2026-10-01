@@ -265,9 +265,13 @@ def apply_temperature_scaling(
         sampling_params: Sampling parameters
 
     Returns:
-        torch.Tensor: Temperature-scaled logits
+        torch.Tensor: Temperature-scaled logits. Half-precision inputs are promoted
+        to FP32 when the temperature is not one; otherwise the input is unchanged.
     """
     if sampling_params is not None and sampling_params.temperature != 1.0:
+        # Upcast before division to avoid rounding the scaled logits in BF16/FP16.
+        if logits.dtype in (torch.bfloat16, torch.float16):
+            logits = logits.float()
         logits.div_(sampling_params.temperature)
     return logits
 
@@ -431,7 +435,7 @@ def forward_with_post_processing_fn(
         # Temperature scaling is element-wise, directly applying it here.
         # Other sampling parameters like top-k and top-p need the logits from whole vocabulary,
         # so applying them when gathering logits from vocab parallel (called in LossPostProcessor and LogprobsPostProcessor).
-        apply_temperature_scaling(output_tensor, sampling_params)
+        output_tensor = apply_temperature_scaling(output_tensor, sampling_params)
 
     # Use type checking to dispatch to the correct post-processing method
     if isinstance(post_processing_fn, LossPostProcessor):
