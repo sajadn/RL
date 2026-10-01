@@ -127,7 +127,6 @@ def test_validation_inherits_training_decoder(tmp_path):
         ),
         ({"policy": {"dtensor_cfg": {"enabled": True}}}, "DTensor"),
         ({"policy": {"megatron_cfg": {"enabled": False}}}, "Megatron training backend"),
-        ({"checkpointing": {"enabled": True}}, "Resumable checkpointing"),
         ({"loss_fn": {"use_kl_in_reward": True}}, "reward-side KL"),
         ({"loss_fn": {"force_on_policy_ratio": True}}, "recomputed prev_logprobs"),
         (
@@ -283,3 +282,12 @@ def test_lazy_dataset_matches_reference_generation_and_repeat():
     assert prompt.endswith(
         "Put the completed grid inside <answer> </answer> tags, as rows of space-separated digits."
     )
+
+
+@pytest.mark.parametrize("async_mode", [False, True])
+def test_checkpointing_is_supported(async_mode: bool) -> None:
+    config = load()
+    config.grpo.async_grpo.enabled = async_mode
+    config.checkpointing.enabled = True
+    config.checkpointing.save_optimizer = True
+    validate_config(config)

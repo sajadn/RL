@@ -30,7 +30,7 @@ Each selected response token appears in exactly one level's loss mask. Gradients
 
 `DiffusionLossPostProcessor` and `DiffusionLogprobsPostProcessor` share `selected_diffusion_logprobs`. The loss processor calls core `ClippedPGLossFn` with `shift_labels=False`; scores and metadata remain at the same positions without dummy-column padding. Temperature scaling and microbatch loss scaling remain in the upstream forward and postprocessor.
 
-Supported training layouts are dense BF16 TP/DP with PP=CP=EP=1, unpacked fixed-width sequences, and synchronous gradient/parameter collectives. Sequence parallelism, PEFT, quantization, dynamic batching, and resumable checkpoints are not supported by this research driver. Megatron generation shares live training weights; vLLM uses native weight synchronization.
+Supported training layouts are dense BF16 TP/DP with PP=CP=EP=1, unpacked fixed-width sequences, and synchronous gradient/parameter collectives. Sequence parallelism, PEFT, quantization, and dynamic batching are not supported by this research driver. Megatron generation shares live training weights; vLLM uses native weight synchronization.
 
 ## Generation
 
@@ -141,3 +141,19 @@ if validation raises. The groups share generation GPU memory sequentially but
 consume extra CPU memory for sleeping model weights.
 Megatron generation and non-default refit transports are rejected for this option.
 This port does not add runtime sampler reconfiguration or the SGLang variant format.
+
+## Checkpointing and continuation
+
+Set `checkpointing.enabled: true` and an explicit `checkpointing.checkpoint_dir`
+to use upstream GRPO checkpointing. Keep `checkpointing.save_optimizer: true` for
+training continuations. The upstream controller saves policy/optimizer state,
+training counters, and dataloader state; async GRPO also saves rollout and replay
+buffer state. It resumes the latest finalized `step_<n>` directory under the same
+checkpoint root. Temporary `tmp_step_<n>` directories are not resumable.
+
+Keep the training topology unchanged when restoring Megatron distributed optimizer
+state. Queue continuation jobs with `afterany` and require a completed checkpoint
+before launching them, so a missing checkpoint cannot silently start fresh.
+`checkpointing.checkpoint_must_save_by` sets the save deadline within each allocation;
+leave time for validation, checkpoint finalization, and shutdown before Slurm's limit.
+These settings also apply to Trace through the shared driver.

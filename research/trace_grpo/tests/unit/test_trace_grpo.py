@@ -346,7 +346,8 @@ def test_confidence_stop_retains_replay_context_and_semantic_length():
 
 
 @pytest.mark.parametrize("async_mode", [False, True])
-def test_trace_recipes_validate(async_mode):
+@pytest.mark.parametrize("checkpointing", [False, True])
+def test_trace_recipes_validate(async_mode, checkpointing: bool):
     register_omegaconf_resolvers()
     suffix = "-async" if async_mode else ""
     path = (
@@ -354,6 +355,7 @@ def test_trace_recipes_validate(async_mode):
         / f"configs/recipes/trace_grpo-sudoku6x6-4n8g-megatron-inference{suffix}-long.yaml"
     )
     raw = load_config(path)
+    raw.checkpointing.enabled = checkpointing
     parsed = validate_config(raw)
     assert parsed.schedule.num_level_samples == 1
     raw.trace_grpo.schedule.num_level_samples = 3

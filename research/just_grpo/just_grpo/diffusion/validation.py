@@ -206,8 +206,6 @@ def validate_experiment(
         "sudoku_answer_tag",
     ):
         raise ValueError("Unsupported Sudoku prompt style")
-    if config.checkpointing.enabled:
-        raise ValueError("Resumable checkpointing is unsupported")
     world_size = world
     if diffusion.distributed:
         data_parallel_size = world_size // p.megatron_cfg.tensor_model_parallel_size

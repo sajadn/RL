@@ -25,8 +25,8 @@ post-stop tokens remain available as replay context; uncommitted tail positions
 remain MASK. Loss and logprob diagnostics include only selected tokens through
 the first stop token, while environment text excludes the retained tail.
 Whole-response sequence TIS and `seq_logprob_error_threshold` are rejected for
-sampled Trace scoring. The driver data-plane path, multi-turn rollouts, and
-checkpoint resumption remain unsupported.
+sampled Trace scoring. The driver data-plane path and multi-turn rollouts remain unsupported.
+Checkpoint saving and continuation use the [shared upstream path](../just_grpo/README.md#checkpointing-and-continuation).
 
 Recipes cover sync/async Megatron generation and the reference vLLM fork.
 Megatron supports `leftmost` and `confidence_threshold`; the reference vLLM fork
