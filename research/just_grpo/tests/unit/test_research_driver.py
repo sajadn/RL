@@ -19,6 +19,8 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 from just_grpo import train
+from just_grpo.config import validate_config
+from just_grpo.diffusion import train as driver
 from just_grpo.generation.megatron_generation import MegatronDiffusionGeneration
 from omegaconf import OmegaConf
 from test_sudoku_and_config import load, load_reference_vllm
@@ -27,9 +29,10 @@ from nemo_rl.models.generation.megatron.megatron_generation import MegatronGener
 from nemo_rl.weight_sync.factory import create_weight_synchronizer
 
 
+@pytest.mark.parametrize("with_preparation", [False, True])
 @pytest.mark.parametrize("mode", ["vllm", "megatron-sync", "megatron-async"])
 def test_driver_uses_unmodified_setup_and_selects_upstream_trainer(
-    monkeypatch, tmp_path, mode
+    monkeypatch, tmp_path, mode, with_preparation: bool
 ):
     """Execute the research driver, mocking infrastructure and the training loops.
 
@@ -39,6 +42,9 @@ def test_driver_uses_unmodified_setup_and_selects_upstream_trainer(
     """
     config = load_reference_vllm() if mode == "vllm" else load()
     config.logger.log_dir = str(tmp_path)
+    config.policy.generation.stop_token_ids = None
+    prepare = Mock()
+    factory = Mock(return_value=prepare)
     if mode == "megatron-async":
         config.grpo.async_grpo.enabled = True
         config.grpo.async_grpo.max_trajectory_age_steps = 2
@@ -98,9 +104,12 @@ def test_driver_uses_unmodified_setup_and_selects_upstream_trainer(
             policy.offload_before_refit.assert_called_once()
             policy.prepare_for_lp_inference.assert_called_once()
             assert generation.blocks_training()
-        assert kwargs == (
-            {"max_trajectory_age_steps": 2} if mode == "megatron-async" else {}
-        )
+        expected_kwargs = {"shift_labels": False}
+        if mode == "megatron-async":
+            expected_kwargs["max_trajectory_age_steps"] = 2
+        if with_preparation:
+            expected_kwargs["prepare_training_data_fn"] = prepare
+        assert kwargs == expected_kwargs
 
     grpo = ModuleType("nemo_rl.algorithms.grpo")
     grpo.MasterConfig = master_config
@@ -125,8 +134,17 @@ def test_driver_uses_unmodified_setup_and_selects_upstream_trainer(
     monkeypatch.setattr(registry, "ACTOR_ENVIRONMENT_REGISTRY", {})
     monkeypatch.setattr(registry, "get_actor_python_env", lambda _: sys.executable)
     monkeypatch.setattr(virtual_cluster, "init_ray", Mock())
-    monkeypatch.setattr(train.ray, "shutdown", Mock())
-    train.run(config)
+    monkeypatch.setattr(driver.ray, "shutdown", Mock())
+    if with_preparation:
+        driver.run(
+            config,
+            diffusion=validate_config(config),
+            prepare_training_data_factory=factory,
+        )
+        factory.assert_called_once_with([2])
+    else:
+        train.run(config)
+        factory.assert_not_called()
     grpo.setup.assert_called_once()
     (
         grpo.async_grpo_train if mode == "megatron-async" else grpo.grpo_train
@@ -136,5 +154,5 @@ def test_driver_uses_unmodified_setup_and_selects_upstream_trainer(
     ).assert_not_called()
     assert len(trained) == 1
     logger.finish.assert_called_once()
-    train.ray.shutdown.assert_called_once()
+    driver.ray.shutdown.assert_called_once()
     lm_policy.Policy.assert_not_called()

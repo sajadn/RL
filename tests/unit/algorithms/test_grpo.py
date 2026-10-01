@@ -6432,3 +6432,40 @@ def test_grpo_train_sync_logs_data_plane_metrics_before_committing_the_step(
         if f"data_plane/{scope}/breakdown" in c.args
     ], "the per-op breakdown table was not logged"
     client.close()
+
+
+def test_sequence_diagnostics_only_consider_scored_positions():
+    from nemo_rl.algorithms.grpo import compute_and_apply_seq_logprob_error_masking
+
+    data = BatchedDataDict(
+        token_mask=torch.tensor([[0, 1, 1]]),
+        sample_mask=torch.ones(1),
+        logprob_token_mask=torch.tensor([[False, True, False]]),
+        prev_logprobs=torch.tensor([[0.0, -1.0, 0.0]]),
+        generation_logprobs=torch.tensor([[0.0, -1.0, -100.0]]),
+    )
+    metrics = compute_and_apply_seq_logprob_error_masking(data, torch.ones(1), None)
+    assert metrics["mean_seq_mult_prob_error"] == 1.0
+
+
+@pytest.mark.parametrize("shift_labels", [True, False])
+@pytest.mark.parametrize("explicit_coverage", [True, False])
+def test_sequence_diagnostics_first_position_follows_score_alignment(
+    shift_labels, explicit_coverage
+):
+    """A same-position score at index zero must affect metrics and rejection."""
+    data = BatchedDataDict(
+        token_mask=torch.ones(1, 2),
+        sample_mask=torch.ones(1),
+        prev_logprobs=torch.tensor([[-1.0, -1.0]]),
+        generation_logprobs=torch.tensor([[-3.0, -1.0]]),
+    )
+    if explicit_coverage:
+        data["logprob_token_mask"] = torch.ones(1, 2, dtype=torch.bool)
+    metrics = compute_and_apply_seq_logprob_error_masking(
+        data, torch.ones(1), 2.0, shift_labels=shift_labels
+    )
+    expected = 1.0 if shift_labels else (torch.exp(torch.tensor(2.0)).item() + 1) / 2
+    assert metrics["mean_seq_mult_prob_error"] == pytest.approx(expected)
+    assert metrics["num_masked_seqs"] == int(not shift_labels)
+    assert data["sample_mask"].item() == int(shift_labels)
