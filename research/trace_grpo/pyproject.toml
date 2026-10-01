@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "trace-grpo"
+version = "0.1.0"
+description = "TraceGRPO recorded diffusion trajectory training on NeMo RL"
+readme = "README.md"
+requires-python = ">=3.13.14,<3.14"
+dependencies = ["just-grpo", "nemo-rl"]
+
+[dependency-groups]
+test = ["pytest>=7.0.0"]
+
+[tool.uv.sources]
+just-grpo = { workspace = true }
+nemo-rl = { workspace = true }
+
+[tool.hatch.build]
+exclude = ["**/*.swp", "**/*.swo"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["trace_grpo"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+pythonpath = ["../just_grpo/tests/unit"]

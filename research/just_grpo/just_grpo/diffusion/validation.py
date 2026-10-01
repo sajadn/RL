@@ -267,6 +267,8 @@ def validate_experiment(
             "return_entropy": params.returns_entropy,
             "return_reveal_steps": params.returns_reveal_steps,
         }
+        if params.selection_policy == "entropy_budget":
+            expected_diffusion["entropy_bound"] = params.entropy_bound
         if params.emit_full_blocks is not None:
             expected_diffusion["emit_full_blocks"] = params.emit_full_blocks
         if (

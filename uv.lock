@@ -67,6 +67,7 @@ members = [
     "just-grpo",
     "nemo-rl",
     "template-project",
+    "trace-grpo",
 ]
 constraints = [
     { name = "aiohttp", specifier = ">=3.13.3" },
@@ -7822,6 +7823,29 @@ sdist = { url = "https://files.pythonhosted.org/packages/21/3b/6c24bec5be5e743ff
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f9/1c/01bfd571a64e7f270e6bab5e33777debe0edc56759233ce84f27dec92d14/tqdm-4.70.0-py3-none-any.whl", hash = "sha256:7f585706bfddbdebf89daac705b2dfcc16890130727d3197ca62c732b4310953", size = 80184, upload-time = "2026-07-27T11:33:13.167Z" },
 ]
+
+[[package]]
+name = "trace-grpo"
+version = "0.1.0"
+source = { editable = "research/trace_grpo" }
+dependencies = [
+    { name = "just-grpo" },
+    { name = "nemo-rl" },
+]
+
+[package.dev-dependencies]
+test = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "just-grpo", editable = "research/just_grpo" },
+    { name = "nemo-rl", editable = "." },
+]
+
+[package.metadata.requires-dev]
+test = [{ name = "pytest", specifier = ">=7.0.0" }]
 
 [[package]]
 name = "traitlets"

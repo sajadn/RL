@@ -23,8 +23,14 @@ class DiffusionSamplingParams(BaseModel, extra="allow"):
     block_size: int = Field(gt=0)
     max_steps: int = Field(gt=0)
     selection_policy: Literal[
-        "leftmost", "confidence_threshold", "random", "entropy", "low_confidence"
+        "leftmost",
+        "confidence_threshold",
+        "random",
+        "entropy",
+        "entropy_budget",
+        "low_confidence",
     ]
+    entropy_bound: float = Field(default=0.1, ge=0, allow_inf_nan=False)
     threshold: float = Field(gt=0, lt=1)
     returns_reveal_steps: bool
     returns_entropy: bool
