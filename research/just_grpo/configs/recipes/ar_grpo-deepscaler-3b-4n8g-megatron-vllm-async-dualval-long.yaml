@@ -43,7 +43,7 @@ loss_fn:
 
 policy:
   model_name: nvidia/Nemotron-Labs-Diffusion-3B
-  worker_extension_cls_fqn: ar_grpo.policy.NemotronDiffusionMegatronPolicyWorker
+  worker_extension_cls_fqn: ar_grpo.policy.ARModeForMultiModeMegatronPolicy
   train_global_batch_size: ${mul:${grpo.num_prompts_per_step},${grpo.num_generations_per_prompt}}
   # Start with one sequence per microbatch when disabling recomputation at 4K.
   train_micro_batch_size: 1

@@ -3,7 +3,7 @@
 `ar_grpo/policy.py` contains the causal Nemotron policy adapter shared by the
 SingleController launcher (`run_ar_grpo.py`) and the legacy GRPO launcher
 (`../just_grpo/run_ar_grpo.py`). Both use
-`ar_grpo.policy.NemotronDiffusionMegatronPolicyWorker`.
+`ar_grpo.policy.ARModeForMultiModeMegatronPolicy`.
 
 The adapter selects causal attention for whole-batch training, SingleController
 microbatch training, logprob calculation, and top-k scoring. It disables KV

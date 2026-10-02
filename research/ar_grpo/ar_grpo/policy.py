@@ -28,7 +28,9 @@ from nemo_rl.models.policy.workers.megatron_policy_worker import (
 )
 
 
-class NemotronDiffusionMegatronPolicyWorkerImpl(MegatronPolicyWorkerImpl):
+class ARModeForMultiModeMegatronPolicyImpl(MegatronPolicyWorkerImpl):
+    """Select AR attention for training and scoring in a multi-mode model."""
+
     def __init__(self, config: PolicyConfig, *args: Any, **kwargs: Any) -> None:
         # Bridge and checkpoint code are only needed inside the policy actor.
         from megatron.bridge.utils.instantiate_utils import (
@@ -101,5 +103,10 @@ class NemotronDiffusionMegatronPolicyWorkerImpl(MegatronPolicyWorkerImpl):
 
 
 @ray.remote(runtime_env=get_runtime_env_for_policy_worker("megatron_policy_worker"))
-class NemotronDiffusionMegatronPolicyWorker(NemotronDiffusionMegatronPolicyWorkerImpl):
+class ARModeForMultiModeMegatronPolicy(ARModeForMultiModeMegatronPolicyImpl):
     pass
+
+
+# Preserve imports and serialized class references used by existing AR jobs.
+NemotronDiffusionMegatronPolicyWorkerImpl = ARModeForMultiModeMegatronPolicyImpl
+NemotronDiffusionMegatronPolicyWorker = ARModeForMultiModeMegatronPolicy

@@ -63,6 +63,8 @@ class NativeWorker:
 
 @pytest.fixture
 def policy(monkeypatch: pytest.MonkeyPatch) -> Any:
+    # Load native config dependencies before replacing the Ray actor decorator.
+    importlib.import_module("nemo_rl.models.policy")
     native = ModuleType("nemo_rl.models.policy.workers.megatron_policy_worker")
     native.MegatronPolicyWorkerImpl = NativeWorker
     monkeypatch.setitem(sys.modules, native.__name__, native)
@@ -84,7 +86,7 @@ def policy(monkeypatch: pytest.MonkeyPatch) -> Any:
 def test_causal_calls_preserve_gradients_and_restore_attention(
     policy: Any, method: str, fail: bool
 ) -> None:
-    worker = object.__new__(policy.NemotronDiffusionMegatronPolicyWorkerImpl)
+    worker = object.__new__(policy.ARModeForMultiModeMegatronPolicyImpl)
     layer = Attention()
     worker.model = torch.nn.Sequential(layer)
     data = torch.ones(1, 2)
@@ -123,7 +125,7 @@ def test_constructor_preserves_model_overrides(
         if with_overrides
         else {},
     }
-    worker = policy.NemotronDiffusionMegatronPolicyWorkerImpl(config)
+    worker = policy.ARModeForMultiModeMegatronPolicyImpl(config)
     assert worker.cfg["megatron_cfg"]["model_overrides"]["seq_length"] == 4096
     if with_overrides:
         assert worker.cfg["megatron_cfg"]["model_overrides"]["hidden_size"] == 2
@@ -131,7 +133,7 @@ def test_constructor_preserves_model_overrides(
 
 
 def test_missing_causal_attention_fails_explicitly(policy: Any) -> None:
-    worker = object.__new__(policy.NemotronDiffusionMegatronPolicyWorkerImpl)
+    worker = object.__new__(policy.ARModeForMultiModeMegatronPolicyImpl)
     worker.model = torch.nn.Sequential(torch.nn.Linear(2, 1))
     with pytest.raises(RuntimeError, match="causal attention modules"):
         worker.train_microbatch(torch.ones(1, 2))
