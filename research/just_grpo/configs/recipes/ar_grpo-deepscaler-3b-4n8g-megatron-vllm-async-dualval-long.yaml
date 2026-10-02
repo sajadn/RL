@@ -1,0 +1,143 @@
+# AR GRPO on Nemotron-Labs-Diffusion-3B: DeepScaleR train, AIME2024 validation.
+# Adapted from diffusion_RL/RL/examples/configs/
+# deepscaler_nemotron_labs_diffusion_3b_vllm_ar_async_grpo_megatron_2t4g.yaml.
+# Run with research/just_grpo/run_ar_grpo.py (not the diffusion training driver).
+# Set NRL_VLLM_PY_EXECUTABLE to the provisioned diffusion-capable vLLM runtime;
+# include the repo and research/just_grpo in PYTHONPATH. EXPANDABLE_SEGMENTS=false.
+#
+# Starting topology: 2 training + 2 generation nodes, each with 8 H100-80GB GPUs.
+# The source recipe records worse node-hour efficiency for 2 train + 4 generation
+# and recommends trying 2+2 with max_num_seqs=64. This no-recompute layout has
+# not been GPU-profiled; it is a starting point, not a measured optimum.
+# TP=PP=CP=1 gives 16 training replicas. GBS=128*8=1024 gives 64 samples/rank.
+# Validation engines time-share the 16 generation GPUs; no extra nodes needed.
+defaults:
+  - ../../../../examples/configs/grpo_math_1B.yaml
+  - ../validation/ar_diffusion.yaml
+
+grpo:
+  num_prompts_per_step: 128
+  num_generations_per_prompt: 8
+  # The trainer requires positive integers; effectively uncapped within Slurm.
+  max_num_steps: 2147483647
+  max_num_epochs: 2147483647
+  normalize_rewards: true
+  skip_reference_policy_logprobs_calculation: true
+  val_at_start: true
+  val_at_end: true
+  val_period: 10
+  # 30 AIME problems repeated 16 times; batch size divides the full 480 samples.
+  max_val_samples: 480
+  val_batch_size: 32
+  async_grpo:
+    enabled: true
+    max_trajectory_age_steps: 1
+
+loss_fn:
+  reference_policy_kl_penalty: 0.0
+  use_importance_sampling_correction: true
+  truncated_importance_sampling_type: tis
+  truncated_importance_sampling_ratio: 2.0
+  truncated_importance_sampling_ratio_min: null
+
+policy:
+  model_name: nvidia/Nemotron-Labs-Diffusion-3B
+  worker_extension_cls_fqn: just_grpo.algorithms.ar_grpo_policy_worker.NemotronDiffusionMegatronPolicyWorker
+  train_global_batch_size: ${mul:${grpo.num_prompts_per_step},${grpo.num_generations_per_prompt}}
+  # Start with one sequence per microbatch when disabling recomputation at 4K.
+  train_micro_batch_size: 1
+  logprob_batch_size: 1
+  max_total_sequence_length: 4096
+  refit_buffer_size_gb: 1.0
+  dtensor_cfg:
+    enabled: false
+  sequence_packing:
+    enabled: false
+  make_sequence_length_divisible_by: ${policy.megatron_cfg.tensor_model_parallel_size}
+  optimizer: null
+  scheduler: null
+  megatron_cfg:
+    enabled: true
+    activation_checkpointing: false
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: false
+    optimizer:
+      lr: 1.0e-6
+      min_lr: 1.0e-7
+    scheduler:
+      lr_decay_style: constant
+      lr_decay_iters: ${grpo.max_num_steps}
+      lr_warmup_iters: 13
+      lr_warmup_init: 1.0e-7
+  generation:
+    backend: vllm
+    refit_transport: null
+    worker_extension_cls_fqn: just_grpo.generation.reference_vllm.ReferenceVllmAsyncWorker
+    max_new_tokens: 3744
+    temperature: 1.0
+    top_p: 1.0
+    top_k: null
+    stop_token_ids: [11]
+    colocated:
+      enabled: false
+      resources:
+        num_nodes: 2
+        gpus_per_node: 8
+    vllm_cfg:
+      async_engine: true
+      tensor_parallel_size: 1
+      pipeline_parallel_size: 1
+      gpu_memory_utilization: 0.55
+      # 350 prompt + 3744 response + a 16-token diffusion canvas needs 4110.
+      # Generation gets canvas headroom; the training budget remains 4096.
+      max_model_len: 4160
+      enforce_eager: true
+      enable_vllm_metrics_logger: false
+    vllm_kwargs:
+      attention_backend: TRITON_ATTN
+      max_num_seqs: 64
+      kernel_config:
+        enable_flashinfer_autotune: false
+      hf_overrides:
+        architectures: [NemotronLabsDiffusionForCausalLM]
+      diffusion_config: null
+
+# Replace the upstream example's OpenMath train/validation split completely.
+data:
+  _override_: true
+  shuffle: true
+  num_workers: 1
+  use_multiple_dataloader: false
+  max_input_seq_length: 350
+  train:
+    dataset_name: DeepScaler
+  validation:
+    dataset_name: AIME2024
+    repeat: 16
+  default:
+    prompt_file: examples/prompts/cot.txt
+    system_prompt_file: null
+    processor: math_hf_data_processor
+    env_name: math
+
+checkpointing:
+  enabled: true
+  checkpoint_dir: ${oc.env:CHECKPOINT_DIR,results/ar_grpo_deepscaler_3b_async_dualval}
+  save_period: 10
+  keep_top_k: 40
+  # The shared overlay lists diffusion_conf09 first, so it owns primary accuracy.
+  metric_name: val:accuracy
+
+logger:
+  log_dir: ${oc.env:LOG_DIR,logs/ar_grpo_deepscaler_3b_async_dualval}
+  wandb_enabled: true
+  tensorboard_enabled: true
+  wandb:
+    project: diffusion_rl
+    name: ${oc.env:WANDB_RUN_NAME,ar_grpo_deepscaler_3b_lr1e6_async_dualval}
+
+cluster:
+  num_nodes: 4
+  gpus_per_node: 8

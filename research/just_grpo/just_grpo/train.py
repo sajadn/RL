@@ -16,7 +16,7 @@
 from omegaconf import DictConfig
 
 from just_grpo.config import validate_config
-from just_grpo.diffusion import train
+from just_grpo import training as train
 
 
 def run(config: DictConfig) -> None:

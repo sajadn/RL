@@ -105,7 +105,11 @@ def test_fixed_canvas_preserves_reveal_positions():
 
 
 @pytest.mark.parametrize(
-    "path", sorted(RECIPES.glob("*.yaml")), ids=lambda path: path.name
+    "path",
+    sorted(
+        path for path in RECIPES.glob("*.yaml") if not path.name.startswith("ar_grpo-")
+    ),
+    ids=lambda path: path.name,
 )
 def test_every_recipe_uses_megatron(path):
     config = recipe(path.name)

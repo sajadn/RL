@@ -29,8 +29,8 @@ from trace_grpo.algorithm import (
 from trace_grpo.config import validate_config
 from trace_grpo import train as trace_train
 from just_grpo import train as just_train
-from just_grpo.diffusion import train as driver
-from just_grpo.diffusion.train import PrepareTrainingData
+from just_grpo import training as driver
+from just_grpo.training import PrepareTrainingData
 from omegaconf import DictConfig
 from just_grpo.diffusion.denoising_schedule import aggregate_diffusion_logprobs
 from just_grpo.generation.megatron_generation import pack_responses, sample_batch

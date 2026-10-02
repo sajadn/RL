@@ -10,7 +10,7 @@ Research implementation on upstream NeMo-RL `main` (`612d5274059c821dc09c2c90767
 driver. Shared runtime validation lives in `just_grpo/diffusion/validation.py`;
 algorithm-specific configuration stays in `just_grpo/config.py`.
 
-`just_grpo/diffusion/train.py` imports `setup()`, `grpo_train()`, and `async_grpo_train()` from `nemo_rl.algorithms.grpo`. Upstream owns Ray worker placement, data loading, rollout collection, GRPO advantages, validation, logging, and the training loop. Research code supplies the Sudoku data/environment and a `MegatronDiffusionGeneration` implementation of the existing `GenerationInterface`. vLLM uses upstream `VllmGeneration` directly. Setup constructs upstream `Policy` directly; the recipe selects `BlockJustGRPOPolicyWorker` through the existing `policy.worker_extension_cls_fqn` setting. The shared driver registers its runtime and passes the research configuration to the worker. For Megatron inference, the shared driver replaces the native generation wrapper after ordinary upstream setup and attaches a native colocated weight synchronizer. HTTP serving is disabled, so setup has not started an AR engine. Without named validation modes, vLLM retains its native setup path; multi-mode validation supplies a generation factory to upstream setup. Rollout logprobs are included in scoring inputs for Fast token selection. Previous-policy logprobs are always recomputed through upstream `Policy.get_logprobs()`.
+`just_grpo/training.py` imports `setup()`, `grpo_train()`, and `async_grpo_train()` from `nemo_rl.algorithms.grpo`. Upstream owns Ray worker placement, data loading, rollout collection, GRPO advantages, validation, logging, and the training loop. Research code supplies the Sudoku data/environment and a `MegatronDiffusionGeneration` implementation of the existing `GenerationInterface`. vLLM uses upstream `VllmGeneration` directly. Setup constructs upstream `Policy` directly; the recipe selects `BlockJustGRPOPolicyWorker` through the existing `policy.worker_extension_cls_fqn` setting. The shared driver registers its runtime and passes the research configuration to the worker. For Megatron inference, the shared driver replaces the native generation wrapper after ordinary upstream setup and attaches a native colocated weight synchronizer. HTTP serving is disabled, so setup has not started an AR engine. Without named validation modes, vLLM retains its native setup path; multi-mode validation supplies a generation factory to upstream setup. Rollout logprobs are included in scoring inputs for Fast token selection. Previous-policy logprobs are always recomputed through upstream `Policy.get_logprobs()`.
 
 ## Diffusion training
 
@@ -157,3 +157,24 @@ before launching them, so a missing checkpoint cannot silently start fresh.
 `checkpointing.checkpoint_must_save_by` sets the save deadline within each allocation;
 leave time for validation, checkpoint finalization, and shutdown before Slurm's limit.
 These settings also apply to Trace through the shared driver.
+
+## AR GRPO on DeepScaleR
+
+`run_ar_grpo.py` trains Nemotron-Labs-Diffusion-3B with causal AR attention,
+DeepScaleR training data, and AIME2024 validation. Its recipe uses LR `1e-6`,
+2 training + 2 generation nodes, async rollouts, and no activation recomputation.
+The same checkpoint is validated in `diffusion_conf09` and `ar` modes.
+
+```bash
+PYTHONPATH="$PWD:$PWD/research/just_grpo" EXPANDABLE_SEGMENTS=false \
+uv run research/just_grpo/run_ar_grpo.py \
+  --config research/just_grpo/configs/recipes/ar_grpo-deepscaler-3b-4n8g-megatron-vllm-async-dualval-long.yaml \
+  --generation-python "$NRL_VLLM_PY_EXECUTABLE"
+```
+
+AR, JustGRPO, and Trace use `just_grpo/training.py` for controller setup and the
+lifecycle of `MultiModeValidation` in `just_grpo/generation/validation.py`.
+AR uses shifted next-token labels and a causal policy adapter; diffusion
+algorithms keep their existing unshifted labels and schedules. This launcher
+uses the legacy GRPO controllers; `research/ar_grpo/run_ar_grpo.py` is the
+separate SingleController entrypoint.

@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, Mock
 import pytest
 from just_grpo import train
 from just_grpo.config import validate_config
-from just_grpo.diffusion import train as driver
+from just_grpo import training as driver
 from just_grpo.generation.megatron_generation import MegatronDiffusionGeneration
 from omegaconf import OmegaConf
 from test_sudoku_and_config import load, load_reference_vllm
@@ -125,6 +125,9 @@ def test_driver_uses_unmodified_setup_and_selects_upstream_trainer(
     lm_policy.Policy = Mock()
     monkeypatch.setitem(sys.modules, lm_policy.__name__, lm_policy)
     from just_grpo.environments import sudoku
+    from nemo_rl.environments import utils as env_utils
+
+    monkeypatch.setattr(env_utils, "shutdown_environments", Mock())
 
     from nemo_rl.distributed import ray_actor_environment_registry as registry
     from nemo_rl.distributed import virtual_cluster
