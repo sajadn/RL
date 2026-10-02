@@ -14,6 +14,7 @@
 """Compare block execution against independently executed serial canvases."""
 
 import copy
+from typing import Any
 
 import pytest
 import torch
@@ -25,6 +26,19 @@ from just_grpo.config import ScheduleConfig
 from torch import nn
 
 from nemo_rl.distributed.batched_data_dict import BatchedDataDict
+
+
+def scatter_logprobs(
+    trajectory: BatchedDataDict[Any],
+    logprobs: torch.Tensor,
+    *,
+    original_width: int,
+) -> torch.Tensor:
+    """Reconstruct rollout-coordinate scores for serial and gradient comparisons."""
+    output = logprobs.new_zeros((logprobs.shape[0], original_width))
+    return output.scatter_add(
+        1, trajectory["original_positions"], logprobs * trajectory["token_mask"]
+    )
 
 
 def asymmetric_mask(data, noisy_width, clean_width):
@@ -152,7 +166,8 @@ def test_logprobs_and_gradients_match_serial(k):
         pad_token_id=0,
     )
     accumulated = sum(
-        schedule.scatter_logprobs(t, model(t)) for t in schedule.return_schedule(2)
+        scatter_logprobs(t, model(t), original_width=data["input_ids"].shape[1])
+        for t in schedule.return_schedule(2)
     )
     expected = serial(independent, data, 4, k)
     torch.testing.assert_close(accumulated, expected, atol=1e-6, rtol=1e-5)
@@ -172,7 +187,11 @@ def test_each_token_harvested_once_and_tail_stays_masked(k):
     )
     coverage = torch.zeros_like(data["input_ids"])
     for t in schedule.return_schedule(2):
-        coverage += schedule.scatter_logprobs(t, torch.ones_like(t["input_ids"]))
+        coverage += scatter_logprobs(
+            t,
+            torch.ones_like(t["input_ids"]),
+            original_width=data["input_ids"].shape[1],
+        )
         assert t["masked_indices"][0, 6:8].all()
         assert t["masked_indices"][1, 3].all()
         torch.testing.assert_close(t["clean_input_ids"], data["input_ids"])
@@ -234,7 +253,10 @@ def test_variable_prompts_match_serial_without_prefix(prompt_length, reveal):
         ScheduleConfig(mask_token_id=31, block_size=4, reveal_tokens_per_step=reveal),
         pad_token_id=0,
     )
-    actual = sum(schedule.scatter_logprobs(t, model(t)) for t in schedule.iter_levels())
+    actual = sum(
+        scatter_logprobs(t, model(t), original_width=data["input_ids"].shape[1])
+        for t in schedule.iter_levels()
+    )
     expected = serial(independent, data, 4, reveal)
     torch.testing.assert_close(actual, expected, atol=1e-6, rtol=1e-5)
     actual.sum().backward()

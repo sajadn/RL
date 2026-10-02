@@ -96,7 +96,6 @@ class BlockJustGRPOSchedule(DenoisingSchedule):
         self.base = layout.base
         self.response_mask = layout.response_mask
         self.canvas_mask = layout.canvas_mask
-        self.original_width = layout.original_width
         self.config = config
         ids = data["input_ids"]
         block = config.block_size
@@ -153,11 +152,3 @@ class BlockJustGRPOSchedule(DenoisingSchedule):
             & (offsets < prefix + self.config.reveal_tokens_per_step)
         )
         return result
-
-    def scatter_logprobs(
-        self, trajectory: BatchedDataDict[Any], logprobs: torch.Tensor
-    ) -> torch.Tensor:
-        output = logprobs.new_zeros((logprobs.shape[0], self.original_width))
-        return output.scatter_add(
-            1, trajectory["original_positions"], logprobs * trajectory["token_mask"]
-        )

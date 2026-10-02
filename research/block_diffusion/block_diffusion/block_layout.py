@@ -88,7 +88,6 @@ class BlockDiffusionLayout:
         included = data["sample_mask"].bool()[:, None]
         self.response_mask = response & included
         self.canvas_mask = (positions < canvas_lengths[:, None]) & included
-        self.original_width = ids.shape[1]
         self.base = BatchedDataDict(
             input_ids=noisy,
             target_ids=noisy,

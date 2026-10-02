@@ -20,7 +20,7 @@ import torch
 from just_grpo.algorithms.block_just_grpo import BlockJustGRPOSchedule
 from just_grpo.config import ScheduleConfig, validate_config
 from omegaconf import OmegaConf
-from test_schedule import batch
+from test_schedule import batch, scatter_logprobs
 
 from nemo_rl.utils.config import load_config, register_omegaconf_resolvers
 
@@ -99,8 +99,10 @@ def test_fixed_canvas_preserves_reveal_positions():
         assert not b["masked_indices"][:, width:].any()
         values = torch.randn_like(b["input_ids"], dtype=torch.float32)
         torch.testing.assert_close(
-            dynamic.scatter_logprobs(a, values[:, :width]),
-            fixed.scatter_logprobs(b, values),
+            scatter_logprobs(
+                a, values[:, :width], original_width=data["input_ids"].shape[1]
+            ),
+            scatter_logprobs(b, values, original_width=data["input_ids"].shape[1]),
         )
 
 
