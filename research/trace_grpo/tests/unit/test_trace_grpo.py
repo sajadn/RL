@@ -481,12 +481,9 @@ def test_entrypoint_loads_its_own_recipe_and_applies_cli_overrides(
             str(entrypoint),
             "--config",
             str(recipe),
-            "--model",
-            "/test/model",
-            "--output-dir",
-            str(tmp_path),
-            "--generation-python",
-            "/test/python",
+            "policy.model_name=/test/model",
+            f"logger.log_dir={tmp_path}",
+            f"{project}.generation_python=/test/python",
         ],
     )
     runpy.run_path(str(entrypoint), run_name="__main__")

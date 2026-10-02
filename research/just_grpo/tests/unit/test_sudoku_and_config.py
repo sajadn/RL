@@ -200,10 +200,8 @@ def test_entry_point_loads_inheritance_and_cli_overrides(monkeypatch, tmp_path):
             "run_just_grpo.py",
             "--config",
             str(RECIPE),
-            "--model",
-            "/test/checkpoint",
-            "--output-dir",
-            "/test/results",
+            "policy.model_name=/test/checkpoint",
+            "logger.log_dir=/test/results",
             "policy.optimizer.kwargs.lr=2e-6",
         ],
     )

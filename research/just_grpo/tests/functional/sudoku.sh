@@ -18,12 +18,12 @@ project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 : "${OUTPUT_DIR:?Set a fresh OUTPUT_DIR}"
 generation_args=()
 if [[ -n "${GENERATION_PYTHON:-}" ]]; then
-  generation_args=(--generation-python "${GENERATION_PYTHON}")
+  generation_args=("just_grpo.generation_python=${GENERATION_PYTHON}")
 fi
 export PYTHONPATH="${project_dir}/../..:${project_dir}${PYTHONPATH:+:${PYTHONPATH}}"
 uv run --directory "${project_dir}/../.." --extra mcore python "${project_dir}/run_just_grpo.py" \
   --config "${CONFIG:-${project_dir}/configs/recipes/just_grpo-sudoku6x6-4n8g-megatron-inference-long.yaml}" \
-  --model "${MODEL}" --output-dir "${OUTPUT_DIR}" \
+  "policy.model_name=${MODEL}" "logger.log_dir=${OUTPUT_DIR}" \
   "${generation_args[@]}" logger.tensorboard_enabled=true \
   cluster.num_nodes=1 cluster.gpus_per_node=2 \
   grpo.num_prompts_per_step=2 grpo.num_generations_per_prompt=4 \

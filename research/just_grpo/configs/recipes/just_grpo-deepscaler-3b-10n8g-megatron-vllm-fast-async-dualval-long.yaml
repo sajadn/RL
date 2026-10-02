@@ -1,5 +1,5 @@
 # Fast JustGRPO: Nemotron-Labs-Diffusion-3B, DeepScaleR train / AIME2024 val.
-# Run with research/just_grpo/run_just_grpo.py and --generation-python pointing
+# Run with research/just_grpo/run_just_grpo.py and just_grpo.generation_python pointing
 # to the provisioned diffusion-capable vLLM runtime. EXPANDABLE_SEGMENTS=false.
 # Requires asymmetric-attention Bridge support; original prompts are unpadded.
 #

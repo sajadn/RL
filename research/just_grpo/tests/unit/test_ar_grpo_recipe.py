@@ -259,3 +259,31 @@ def test_ar_rejects_incompatible_modes_before_starting_training(
     with pytest.raises(ValueError, match=message):
         driver.run(config, generation_python="/vllm/python")
     start.assert_not_called()
+
+
+def test_ar_cli_uses_native_overrides_and_generation_environment(monkeypatch, tmp_path):
+    spec = importlib.util.spec_from_file_location(
+        "ar_recipe_driver", PROJECT / "run_ar_grpo.py"
+    )
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+    start = Mock()
+    monkeypatch.setattr(training, "run", start)
+    monkeypatch.setenv("NRL_VLLM_PY_EXECUTABLE", "/vllm/python")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_ar_grpo.py",
+            "--config",
+            str(RECIPE),
+            "policy.model_name=/test/checkpoint",
+            f"logger.log_dir={tmp_path}",
+        ],
+    )
+    driver.main()
+    config = start.call_args.args[0]
+    assert config.policy.model_name == "/test/checkpoint"
+    assert config.policy.tokenizer.name == "/test/checkpoint"
+    assert config.logger.log_dir == str(tmp_path)
+    assert start.call_args.kwargs == {"generation_python": "/vllm/python"}

@@ -1,5 +1,5 @@
 # TraceGRPO: Nemotron-Labs-Diffusion-3B, DeepScaleR train / AIME2024 val.
-# Run with research/trace_grpo/run_trace_grpo.py and --generation-python pointing
+# Run with research/trace_grpo/run_trace_grpo.py and trace_grpo.generation_python pointing
 # to the provisioned diffusion-capable vLLM runtime. EXPANDABLE_SEGMENTS=false.
 # Requires asymmetric-attention Bridge support; original prompts are unpadded.
 # Include research/block_diffusion and research/trace_grpo in PYTHONPATH.

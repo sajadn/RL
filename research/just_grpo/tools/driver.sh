@@ -16,8 +16,8 @@ set -euo pipefail
 export LD_LIBRARY_PATH="${CUDA_COMPAT_DIR}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 generation_args=()
 if [[ -n "${GENERATION_PYTHON:-}" ]]; then
-  generation_args=(--generation-python "${GENERATION_PYTHON}")
+  generation_args=("just_grpo.generation_python=${GENERATION_PYTHON}")
 fi
 /home/snorouzi/.local/bin/uv run --no-project --python "${POLICY_PYTHON}" \
   python research/just_grpo/run_just_grpo.py --config "${CONFIG}" \
-  --model "${MODEL}" --output-dir "${OUTPUT_DIR}" "${generation_args[@]}"
+  "policy.model_name=${MODEL}" "logger.log_dir=${OUTPUT_DIR}" "${generation_args[@]}"

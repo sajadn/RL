@@ -68,12 +68,12 @@ From the checkout root, with the NeMo-RL `mcore` environment:
 ```bash
 export PYTHONPATH="$PWD:$PWD/research/block_diffusion:$PWD/research/just_grpo${PYTHONPATH:+:$PYTHONPATH}"
 uv run --extra mcore python research/just_grpo/run_just_grpo.py \
-  --config "$PWD/research/block_diffusion:$PWD/research/just_grpo/configs/recipes/just_grpo-sudoku6x6-4n8g-megatron-inference-long.yaml" \
-  --model /path/to/Nemotron-Labs-Diffusion-3B \
-  --output-dir /path/to/fresh/run
+  --config "$PWD/research/just_grpo/configs/recipes/just_grpo-sudoku6x6-4n8g-megatron-inference-long.yaml" \
+  policy.model_name=/path/to/Nemotron-Labs-Diffusion-3B \
+  logger.log_dir=/path/to/fresh/run
 ```
 
-For vLLM, `--generation-python` selects the native Ray generation worker interpreter; it must include the NeMo-RL worker dependencies as well as the reference fork. If omitted, the upstream vLLM actor environment is used. For Megatron generation, select its recipe and omit `--generation-python`. `tools/dfw_distributed.sbatch` handles both smoke and long runs; choose the allocation with `sbatch --nodes` and `--gpus-per-node`, matching the YAML cluster settings. Set `REPO_DIR`, `POLICY_PYTHON`, `MODEL`, `OUTPUT_DIR`, `CONFIG`, `CONTAINER_IMAGE`, and `CUDA_COMPAT_DIR`. `GENERATION_PYTHON` is optional. `POLICY_EXTRA_PYTHONPATH` supports a provisioned dependency overlay. The driver starts or connects to Ray; multi-node jobs use upstream `ray.sub`. Compilation caches use node-local storage. Native vLLM workers own port isolation. Megatron decoding executes inside the training workers.
+For vLLM, `just_grpo.generation_python=/path/to/vllm/python` selects the native Ray generation worker interpreter; it must include the NeMo-RL worker dependencies as well as the reference fork. If omitted, the upstream vLLM actor environment is used. For Megatron generation, select its recipe and leave `just_grpo.generation_python` null. `tools/dfw_distributed.sbatch` handles both smoke and long runs; choose the allocation with `sbatch --nodes` and `--gpus-per-node`, matching the YAML cluster settings. Set `REPO_DIR`, `POLICY_PYTHON`, `MODEL`, `OUTPUT_DIR`, `CONFIG`, `CONTAINER_IMAGE`, and `CUDA_COMPAT_DIR`. `GENERATION_PYTHON` is optional. `POLICY_EXTRA_PYTHONPATH` supports a provisioned dependency overlay. The driver starts or connects to Ray; multi-node jobs use upstream `ray.sub`. Compilation caches use node-local storage. Native vLLM workers own port isolation. Megatron decoding executes inside the training workers.
 
 `tests/functional/sudoku.sh` launches a two-GPU Ray smoke and checks native TensorBoard metrics for three updates, finite gradients, generation/training KL, timing metrics, and initial/final validation.
 
@@ -167,9 +167,9 @@ The same checkpoint is validated in `diffusion_conf09` and `ar` modes.
 
 ```bash
 PYTHONPATH="$PWD:$PWD/research/block_diffusion:$PWD/research/ar_grpo:$PWD/research/just_grpo" EXPANDABLE_SEGMENTS=false \
+NRL_VLLM_PY_EXECUTABLE="$NRL_VLLM_PY_EXECUTABLE" \
 uv run research/just_grpo/run_ar_grpo.py \
-  --config research/just_grpo/configs/recipes/ar_grpo-deepscaler-3b-4n8g-megatron-vllm-async-dualval-long.yaml \
-  --generation-python "$NRL_VLLM_PY_EXECUTABLE"
+  --config research/just_grpo/configs/recipes/ar_grpo-deepscaler-3b-4n8g-megatron-vllm-async-dualval-long.yaml
 ```
 
 AR, JustGRPO, and Trace import the shared `block-diffusion` package and use `block_diffusion/training.py` for controller setup and the

@@ -31,13 +31,13 @@ Checkpoint saving and continuation use the [shared upstream path](../just_grpo/R
 Recipes cover sync/async Megatron generation and the reference vLLM fork.
 Megatron supports `leftmost` and `confidence_threshold`; the reference vLLM fork
 also supports `random`, `entropy`, `entropy_budget`, and `low_confidence`. Supply its interpreter
-with `--generation-python`. Stock upstream vLLM is not supported by these recipes.
+with `trace_grpo.generation_python=/path/to/vllm/python`. Stock upstream vLLM is not supported by these recipes.
 For example, from the repository root in a provisioned environment:
 
 ```bash
 uv run --all-packages --extra mcore python research/trace_grpo/run_trace_grpo.py \
-  --model /path/to/Nemotron-Labs-Diffusion-3B \
-  --output-dir /path/to/fresh/results \
+  policy.model_name=/path/to/Nemotron-Labs-Diffusion-3B \
+  logger.log_dir=/path/to/fresh/results \
   trace_grpo.schedule.num_level_samples=1
 ```
 

@@ -13,13 +13,20 @@
 # limitations under the License.
 """Run Block JustGRPO through the shared diffusion driver."""
 
+import argparse
 from pathlib import Path
 
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from block_diffusion import training
-from block_diffusion.cli import main as diffusion_main
 from just_grpo.config import validate_config
+
+
+from nemo_rl.utils.config import (
+    load_config,
+    parse_hydra_overrides,
+    register_omegaconf_resolvers,
+)
 
 
 def run(config: DictConfig) -> None:
@@ -28,12 +35,18 @@ def run(config: DictConfig) -> None:
 
 
 def main() -> None:
-    diffusion_main(
-        Path(__file__).parent
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path(__file__).parent
         / "configs/recipes/just_grpo-sudoku6x6-4n8g-megatron-inference-long.yaml",
-        config_key="just_grpo",
-        run=run,
     )
+    args, overrides = parser.parse_known_args()
+    register_omegaconf_resolvers()
+    config = parse_hydra_overrides(load_config(args.config), overrides)
+    OmegaConf.resolve(config)
+    run(config)
 
 
 if __name__ == "__main__":

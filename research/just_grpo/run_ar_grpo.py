@@ -54,24 +54,14 @@ def main() -> None:
         default=Path(__file__).parent
         / "configs/recipes/ar_grpo-deepscaler-3b-4n8g-megatron-vllm-async-dualval-long.yaml",
     )
-    parser.add_argument("--model")
-    parser.add_argument("--output-dir")
-    parser.add_argument(
-        "--generation-python", default=os.environ.get("NRL_VLLM_PY_EXECUTABLE")
-    )
     args, overrides = parser.parse_known_args()
-    if not args.generation_python:
-        parser.error(
-            "Set NRL_VLLM_PY_EXECUTABLE or --generation-python to the diffusion vLLM runtime"
-        )
+    generation_python = os.environ.get("NRL_VLLM_PY_EXECUTABLE")
+    if not generation_python:
+        parser.error("Set NRL_VLLM_PY_EXECUTABLE to the diffusion-capable vLLM runtime")
     register_omegaconf_resolvers()
     config = parse_hydra_overrides(load_config(args.config), overrides)
-    if args.model is not None:
-        config.policy.model_name = args.model
-    if args.output_dir is not None:
-        config.logger.log_dir = args.output_dir
     OmegaConf.resolve(config)
-    run(config, generation_python=args.generation_python)
+    run(config, generation_python=generation_python)
 
 
 if __name__ == "__main__":
