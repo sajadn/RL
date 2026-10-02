@@ -20,8 +20,11 @@ from typing import Any
 import ray
 from omegaconf import DictConfig, OmegaConf
 
-from just_grpo.diffusion.config import DiffusionExperimentConfig
-from just_grpo.generation.validation import MultiModeValidation, validation_variants
+from block_diffusion.config import DiffusionExperimentConfig
+from block_diffusion.generation.validation import (
+    MultiModeValidation,
+    validation_variants,
+)
 
 from nemo_rl.data.interfaces import LLMMessageLogType
 from nemo_rl.distributed.batched_data_dict import BatchedDataDict
@@ -50,8 +53,13 @@ def run(
             with the tokenizer-resolved stop token IDs before training starts.
     """
     # The full controller imports optional training and tracking dependencies.
-    from just_grpo.environments.sudoku import SudokuEnvironment, SudokuResponseDataset
-    from just_grpo.generation.megatron_generation import MegatronDiffusionGeneration
+    from block_diffusion.environments.sudoku import (
+        SudokuEnvironment,
+        SudokuResponseDataset,
+    )
+    from block_diffusion.generation.megatron_generation import (
+        MegatronDiffusionGeneration,
+    )
     from nemo_rl.algorithms.grpo import (
         MasterConfig,
         async_grpo_train,

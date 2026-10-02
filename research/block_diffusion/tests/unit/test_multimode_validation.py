@@ -23,8 +23,8 @@ import pytest
 from omegaconf import OmegaConf
 
 from just_grpo.config import validate_config
-from just_grpo.generation.reference_vllm import ReferenceVllmWorkerImpl
-from just_grpo.generation.validation import (
+from block_diffusion.generation.reference_vllm import ReferenceVllmWorkerImpl
+from block_diffusion.generation.validation import (
     MultiModeValidation,
     build_validation_config,
     validation_variants,
@@ -35,7 +35,7 @@ from nemo_rl.utils.config import load_config, register_omegaconf_resolvers
 from test_sudoku_and_config import load_reference_vllm
 
 RESEARCH = Path(__file__).resolve().parents[3]
-OVERRIDES = RESEARCH / "just_grpo/configs/validation/ar_diffusion.yaml"
+OVERRIDES = RESEARCH / "block_diffusion/configs/validation/ar_diffusion.yaml"
 
 
 def variants():

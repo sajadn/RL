@@ -15,8 +15,8 @@
 
 from omegaconf import DictConfig
 
-from just_grpo import training as train
-from just_grpo.training import PrepareTrainingData
+from block_diffusion import training as train
+from block_diffusion.training import PrepareTrainingData
 from trace_grpo.algorithm import TraceGRPO
 from trace_grpo.config import validate_config
 

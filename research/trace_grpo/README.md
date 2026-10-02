@@ -54,13 +54,13 @@ and `nemo_rl/models/policy/workers/trace_grpo_megatron_policy_worker.py` at
 - `configs/recipes/`: Trace Megatron and vLLM recipes, synchronous and asynchronous.
 - `tests/unit/`: Trace replay and configuration tests.
 
-Shared diffusion execution stays in `../just_grpo/just_grpo/diffusion`; Trace imports
-it through `just_grpo.diffusion`. The Python package depends on the `just-grpo`
-workspace package. No diffusion execution code is duplicated.
+Shared diffusion execution lives in `../block_diffusion/block_diffusion` and is
+imported through `block_diffusion`. Trace depends directly on the `block-diffusion`
+workspace package; it does not depend on JustGRPO.
 
 The worker FQN is `trace_grpo.policy_worker.TraceGRPOPolicyWorker`.
 Existing saved run configs need that FQN updated before reuse.
-For provisioned interpreters, include both `research/just_grpo` and
+For provisioned interpreters, include `research/block_diffusion` and
 `research/trace_grpo` on `PYTHONPATH`; the shared DFW sbatch script does this.
 
 Run the Trace tests from the repository root with both research packages available:
@@ -76,6 +76,6 @@ uv run --package trace-grpo --group test python -m pytest \
 Reference-vLLM recipes ending in `-dualval-long.yaml` evaluate each checkpoint in
 both confidence-threshold diffusion and causal AR modes. Sync and async recipes
 use `policy.generation.vllm_val_dllm_variants`; the reusable override is
-`../just_grpo/configs/validation/ar_diffusion.yaml`. See the [shared validation behavior](../just_grpo/README.md#ar-and-diffusion-validation)
+`../block_diffusion/configs/validation/ar_diffusion.yaml`. See the [shared validation behavior](../block_diffusion/README.md#ar-and-diffusion-validation)
 for metric names and engine lifecycle, and [VERIFICATION.md](VERIFICATION.md)
 for recorded checks.

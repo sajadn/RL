@@ -15,7 +15,7 @@
 
 from omegaconf import DictConfig, OmegaConf
 
-from just_grpo.diffusion.validation import validate_experiment
+from block_diffusion.validation import validate_experiment
 from trace_grpo.algorithm import TraceGRPOConfig, validate_trace_experiment
 
 

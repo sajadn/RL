@@ -17,8 +17,11 @@ import pytest
 import torch
 from just_grpo.algorithms.block_just_grpo import BlockJustGRPOSchedule
 from just_grpo.config import DiffusionSamplingParams, ScheduleConfig, validate_config
-from just_grpo.diffusion.denoising_schedule import aggregate_diffusion_logprobs
-from just_grpo.generation.megatron_generation import generate_responses, sample_batch
+from block_diffusion.denoising_schedule import aggregate_diffusion_logprobs
+from block_diffusion.generation.megatron_generation import (
+    generate_responses,
+    sample_batch,
+)
 from test_schedule import TinyDiffusion, asymmetric_mask
 from test_sudoku_and_config import BASE, RECIPE, load, load_reference_vllm
 

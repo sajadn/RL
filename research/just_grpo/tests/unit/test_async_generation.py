@@ -20,7 +20,7 @@ from unittest.mock import Mock
 import pytest
 import torch
 from just_grpo.config import validate_config
-from just_grpo.generation.megatron_generation import MegatronDiffusionGeneration
+from block_diffusion.generation.megatron_generation import MegatronDiffusionGeneration
 from omegaconf import OmegaConf
 from test_sudoku_and_config import PROJECT, load, load_reference_vllm
 

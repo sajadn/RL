@@ -20,7 +20,7 @@ from unittest.mock import Mock
 import pytest
 import torch
 
-from just_grpo.generation.reference_vllm import (
+from block_diffusion.generation.reference_vllm import (
     ReferenceVllmWorkerImpl,
     ReferenceVllmAsyncWorkerImpl,
 )

@@ -19,8 +19,8 @@ import ray
 from omegaconf import OmegaConf
 
 from trace_grpo.algorithm import TraceGRPOConfig, TraceGRPOSchedule
-from just_grpo.diffusion.denoising_schedule import SchedulePurpose
-from just_grpo.diffusion.megatron_diffusion_policy import (
+from block_diffusion.denoising_schedule import SchedulePurpose
+from block_diffusion.megatron_diffusion_policy import (
     MegatronDiffusionPolicyWorkerImpl,
 )
 from nemo_rl.data.interfaces import TokenizerType

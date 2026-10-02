@@ -29,11 +29,11 @@ from trace_grpo.algorithm import (
 from trace_grpo.config import validate_config
 from trace_grpo import train as trace_train
 from just_grpo import train as just_train
-from just_grpo import training as driver
-from just_grpo.training import PrepareTrainingData
+from block_diffusion import training as driver
+from block_diffusion.training import PrepareTrainingData
 from omegaconf import DictConfig
-from just_grpo.diffusion.denoising_schedule import aggregate_diffusion_logprobs
-from just_grpo.generation.megatron_generation import pack_responses, sample_batch
+from block_diffusion.denoising_schedule import aggregate_diffusion_logprobs
+from block_diffusion.generation.megatron_generation import pack_responses, sample_batch
 from nemo_rl.distributed.batched_data_dict import BatchedDataDict
 from nemo_rl.utils.config import load_config, register_omegaconf_resolvers
 from test_megatron_generation import TinyDoubled

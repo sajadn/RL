@@ -2,7 +2,7 @@
 # Run with research/trace_grpo/run_trace_grpo.py and --generation-python pointing
 # to the provisioned diffusion-capable vLLM runtime. EXPANDABLE_SEGMENTS=false.
 # Requires asymmetric-attention Bridge support; original prompts are unpadded.
-# Include research/just_grpo and research/trace_grpo in PYTHONPATH.
+# Include research/block_diffusion and research/trace_grpo in PYTHONPATH.
 #
 # Match the AR GRPO topology: 2 training + 2 generation nodes, 8 GPUs/node.
 # TP=PP=CP=1: 16 training replicas, batch 1024 -> 64 samples per replica.

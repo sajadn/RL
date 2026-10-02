@@ -17,7 +17,7 @@ from pathlib import Path
 
 from trace_grpo import train
 
-from just_grpo.diffusion.cli import main
+from block_diffusion.cli import main
 
 
 if __name__ == "__main__":

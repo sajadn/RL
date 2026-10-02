@@ -18,8 +18,11 @@ from unittest.mock import Mock, call
 
 import pytest
 import torch
-from just_grpo.environments.sudoku import SudokuEnvironmentImpl, SudokuResponseDataset
-from just_grpo.generation.megatron_generation import (
+from block_diffusion.environments.sudoku import (
+    SudokuEnvironmentImpl,
+    SudokuResponseDataset,
+)
+from block_diffusion.generation.megatron_generation import (
     MegatronDiffusionGeneration,
     pack_responses,
 )

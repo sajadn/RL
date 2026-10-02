@@ -4,7 +4,7 @@ grpo:
     enabled: true
 policy:
   generation:
-    worker_extension_cls_fqn: just_grpo.generation.reference_vllm.ReferenceVllmAsyncWorker
+    worker_extension_cls_fqn: block_diffusion.generation.reference_vllm.ReferenceVllmAsyncWorker
     colocated:
       enabled: false
       resources:

@@ -1,6 +1,5 @@
 # Replay one sampled recorded denoising level per response and optimizer step.
-defaults: ../../../just_grpo/configs/recipes/just_grpo-sudoku6x6-4n8g-megatron-inference-long.yaml
-just_grpo: null
+defaults: ../../../block_diffusion/configs/sudoku6x6_megatron.yaml
 grpo:
   seq_logprob_error_threshold: null
 policy:

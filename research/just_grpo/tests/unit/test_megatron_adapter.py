@@ -29,13 +29,13 @@ pytest.importorskip("megatron.bridge")
 from just_grpo.algorithms.block_just_grpo_policy_worker import (
     BlockJustGRPOPolicyWorkerImpl,
 )
-from just_grpo.diffusion.megatron_diffusion_policy import (
+from block_diffusion.megatron_diffusion_policy import (
     MegatronDiffusionPolicyWorkerImpl,
 )
 
 from megatron.core import parallel_state
 from nemo_rl.models.megatron.data import ProcessedMicrobatch
-from just_grpo.diffusion.diffusion_processors import (
+from block_diffusion.diffusion_processors import (
     DiffusionLossPostProcessor,
     DiffusionLogprobsPostProcessor,
     prepare_diffusion_microbatch,

@@ -17,8 +17,8 @@ from pathlib import Path
 
 import pytest
 from just_grpo.config import validate_config
-from just_grpo.environments.sudoku import make_examples
-from just_grpo.environments.sudoku6x6_generator import _count_solutions
+from block_diffusion.environments.sudoku import make_examples
+from block_diffusion.environments.sudoku6x6_generator import _count_solutions
 from omegaconf import OmegaConf
 from pydantic import ValidationError
 
@@ -72,7 +72,7 @@ def load_reference_vllm(path=BASE, *, asynchronous=False):
     config.policy.generation.refit_transport = None
     worker = "ReferenceVllmAsyncWorker" if asynchronous else "ReferenceVllmWorker"
     config.policy.generation.worker_extension_cls_fqn = (
-        f"just_grpo.generation.reference_vllm.{worker}"
+        f"block_diffusion.generation.reference_vllm.{worker}"
     )
     config.policy.generation.vllm_kwargs.diffusion_config = {
         "canvas_length": "${just_grpo.sampling.block_size}",
@@ -271,7 +271,7 @@ def test_reference_template_hyperparameters():
 
 
 def test_lazy_dataset_matches_reference_generation_and_repeat():
-    from just_grpo.environments.sudoku import SudokuDataset, user_prompt
+    from block_diffusion.environments.sudoku import SudokuDataset, user_prompt
 
     expected = make_examples(6, seed=1)
     dataset = SudokuDataset(size=6, seed=1, repeat=4)

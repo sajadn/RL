@@ -1,0 +1,88 @@
+# Shared Sudoku 6x6 settings: 32 GPUs, Megatron training and inference.
+defaults: ../../../examples/configs/grpo_math_1B.yaml
+grpo:
+  num_prompts_per_step: 128
+  num_generations_per_prompt: 8
+  max_num_steps: 100
+  max_val_samples: 1024
+  val_batch_size: 128
+  val_at_start: true
+  val_at_end: true
+  max_num_epochs: 1000
+  normalize_rewards: false
+loss_fn:
+  use_importance_sampling_correction: true
+  truncated_importance_sampling_type: tis
+  truncated_importance_sampling_ratio: 2.0
+policy:
+  model_name: nvidia/Nemotron-Labs-Diffusion-3B
+  train_global_batch_size: ${mul:${grpo.num_prompts_per_step},${grpo.num_generations_per_prompt}}
+  max_total_sequence_length: 1536
+  dtensor_cfg:
+    enabled: false
+  megatron_cfg:
+    enabled: true
+    activation_checkpointing: true
+    optimizer:
+      lr: ${policy.optimizer.kwargs.lr}
+      min_lr: ${policy.optimizer.kwargs.lr}
+      weight_decay: ${policy.optimizer.kwargs.weight_decay}
+      use_precision_aware_optimizer: false
+    scheduler:
+      lr_decay_iters: ${grpo.max_num_steps}
+      lr_warmup_init: ${mul:${policy.optimizer.kwargs.lr},0.1}
+    distributed_data_parallel_config:
+      grad_reduce_in_fp32: true
+      overlap_grad_reduce: false
+      overlap_param_gather: false
+    defer_fp32_logits: true
+  sequence_packing:
+    enabled: false
+  optimizer:
+    kwargs:
+      lr: 3.0e-07
+      fused: true
+  generation:
+    max_new_tokens: 512
+    stop_token_ids:
+    - 11
+    backend: megatron
+    refit_transport: mcore
+    mcore_generation_config:
+      refit_backend: gloo
+      cuda_graph_impl: none
+      materialize_only_last_token_logits: false
+data:
+  train:
+    _override_: true
+    dataset_name: sudoku6x6
+    size: 50000
+    seed: 1
+    repeat: 1
+  validation:
+    dataset_name: sudoku6x6
+    size: 256
+    seed: 2
+    repeat: 4
+  default:
+    prompt_file: null
+    processor: null
+    prompt_style: sudoku_answer_tag
+    enable_thinking: true
+    env_name: sudoku6x6
+  max_input_seq_length: 1280
+env:
+  _override_: true
+  sudoku6x6: {}
+checkpointing:
+  enabled: false
+logger:
+  log_dir: results/block_diffusion_sudoku6x6_megatron
+  monitor_gpus: false
+  wandb_enabled: true
+  wandb:
+    project: diffusion_rl
+    name: ${oc.env:WANDB_RUN_NAME,block_diffusion_sudoku6x6_megatron}
+cluster:
+  num_nodes: 4
+  gpus_per_node: 8

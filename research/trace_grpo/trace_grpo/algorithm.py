@@ -18,9 +18,9 @@ from typing import Any, Literal, Self
 import torch
 from pydantic import Field, model_validator
 
-from just_grpo.diffusion.block_layout import BlockDiffusionLayout
-from just_grpo.diffusion.config import DiffusionExperimentConfig, BlockDiffusionConfig
-from just_grpo.diffusion.denoising_schedule import DenoisingSchedule
+from block_diffusion.block_layout import BlockDiffusionLayout
+from block_diffusion.config import DiffusionExperimentConfig, BlockDiffusionConfig
+from block_diffusion.denoising_schedule import DenoisingSchedule
 from nemo_rl.distributed.batched_data_dict import BatchedDataDict
 
 

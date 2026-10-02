@@ -19,8 +19,8 @@ from pathlib import Path
 
 from omegaconf import DictConfig, OmegaConf
 
-from just_grpo import training
-from just_grpo.generation.validation import validation_variants
+from block_diffusion import training
+from block_diffusion.generation.validation import validation_variants
 from nemo_rl.utils.config import (
     load_config,
     parse_hydra_overrides,
@@ -36,7 +36,7 @@ def run(config: DictConfig, *, generation_python: str) -> None:
     ]["architectures"] != ["NemotronLabsDiffusionForCausalLM"]:
         raise ValueError("AR GRPO requires causal rollout engines")
     if config.policy.worker_extension_cls_fqn != (
-        "just_grpo.algorithms.ar_grpo_policy_worker.NemotronDiffusionMegatronPolicyWorker"
+        "block_diffusion.ar_policy_worker.NemotronDiffusionMegatronPolicyWorker"
     ):
         raise ValueError("AR GRPO requires the Nemotron causal policy worker")
     if config.grpo.async_grpo.enabled and rollout["colocated"]["enabled"]:

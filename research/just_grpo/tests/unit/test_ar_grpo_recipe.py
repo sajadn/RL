@@ -22,8 +22,11 @@ from unittest.mock import MagicMock, Mock
 import pytest
 from omegaconf import OmegaConf
 
-from just_grpo import training
-from just_grpo.generation.validation import build_validation_config, validation_variants
+from block_diffusion import training
+from block_diffusion.generation.validation import (
+    build_validation_config,
+    validation_variants,
+)
 from nemo_rl.utils.config import load_config, register_omegaconf_resolvers
 
 PROJECT = Path(__file__).resolve().parents[2]
@@ -115,9 +118,9 @@ def test_shared_driver_wires_dual_validation_and_training(
     config.policy.generation.colocated.enabled = not asynchronous
     config.policy.generation.vllm_cfg.async_engine = asynchronous
     config.policy.generation.worker_extension_cls_fqn = (
-        "just_grpo.generation.reference_vllm.ReferenceVllmAsyncWorker"
+        "block_diffusion.generation.reference_vllm.ReferenceVllmAsyncWorker"
         if asynchronous
-        else "just_grpo.generation.reference_vllm.ReferenceVllmWorker"
+        else "block_diffusion.generation.reference_vllm.ReferenceVllmWorker"
     )
     validation = Mock()
     monkeypatch.setattr(training, "MultiModeValidation", Mock(return_value=validation))

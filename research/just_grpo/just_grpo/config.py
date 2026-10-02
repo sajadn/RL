@@ -18,12 +18,12 @@ from typing import Self
 from omegaconf import DictConfig, OmegaConf
 from pydantic import Field, model_validator
 
-from just_grpo.diffusion.config import (
+from block_diffusion.config import (
     BlockDiffusionConfig,
     DiffusionExperimentConfig,
     DiffusionSamplingParams as DiffusionSamplingParams,
 )
-from just_grpo.diffusion.validation import validate_experiment
+from block_diffusion.validation import validate_experiment
 
 
 class ScheduleConfig(BlockDiffusionConfig, extra="allow"):

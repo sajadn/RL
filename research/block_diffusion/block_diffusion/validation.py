@@ -15,8 +15,8 @@
 
 from omegaconf import DictConfig, OmegaConf
 
-from just_grpo.diffusion.config import DiffusionExperimentConfig
-from just_grpo.generation.validation import validation_variants
+from block_diffusion.config import DiffusionExperimentConfig
+from block_diffusion.generation.validation import validation_variants
 
 
 def validate_experiment(
@@ -269,7 +269,7 @@ def validate_experiment(
             else "ReferenceVllmWorker"
         )
         if p.generation.worker_extension_cls_fqn != (
-            f"just_grpo.generation.reference_vllm.{worker_name}"
+            f"block_diffusion.generation.reference_vllm.{worker_name}"
         ):
             raise ValueError("Reference vLLM requires its diffusion worker extension")
         params = diffusion.sampling
@@ -292,7 +292,7 @@ def validate_experiment(
             )
             != expected_diffusion
         ):
-            raise ValueError("vLLM diffusion_config must match just_grpo.sampling")
+            raise ValueError("vLLM diffusion_config must match algorithm sampling")
         vllm = p.generation.vllm_cfg
         if (
             vllm.tensor_parallel_size != 1

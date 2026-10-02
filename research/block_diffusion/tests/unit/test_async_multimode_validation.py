@@ -25,7 +25,10 @@ from nemo_rl.models.policy.workers.base_policy_worker import AbstractPolicyWorke
 from nemo_rl.weight_sync.collective_weight_synchronizer import (
     CollectiveWeightSynchronizer,
 )
-from just_grpo.generation.validation import MultiModeValidation, validation_variants
+from block_diffusion.generation.validation import (
+    MultiModeValidation,
+    validation_variants,
+)
 from test_multimode_validation import variants
 
 

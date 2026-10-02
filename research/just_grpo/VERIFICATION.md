@@ -344,7 +344,7 @@ No GPU smoke or cluster submission was performed for this change.
 
 ```bash
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=research/just_grpo:research/trace_grpo:. \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=research/block_diffusion:research/just_grpo:research/trace_grpo:. \
 uv run --no-cache --no-project \
   --python /lustre/fsw/portfolios/coreai/users/snorouzi/nemorl_test_venvs/justgrpo_unit/bin/python \
   python -m pytest research/just_grpo/tests/unit research/trace_grpo/tests/unit \

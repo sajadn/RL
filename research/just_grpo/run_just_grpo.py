@@ -17,7 +17,7 @@ from pathlib import Path
 
 from just_grpo import train
 
-from just_grpo.diffusion.cli import main as diffusion_main
+from block_diffusion.cli import main as diffusion_main
 
 
 def main() -> None:

@@ -24,7 +24,7 @@ from just_grpo.algorithms.block_just_grpo import (
     select_low_confidence_tokens,
 )
 from just_grpo.config import ScheduleConfig, validate_config
-from just_grpo.diffusion.denoising_schedule import aggregate_diffusion_logprobs
+from block_diffusion.denoising_schedule import aggregate_diffusion_logprobs
 
 
 def confidence_batch():

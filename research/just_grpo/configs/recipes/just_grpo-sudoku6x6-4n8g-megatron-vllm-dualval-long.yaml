@@ -1,13 +1,13 @@
 defaults:
   - ./just_grpo-sudoku6x6-4n8g-megatron-inference-long.yaml
-  - ../validation/ar_diffusion.yaml
+  - ../../../block_diffusion/configs/validation/ar_diffusion.yaml
 just_grpo:
   runtime: reference_vllm
 policy:
   generation:
     backend: vllm
     refit_transport: null
-    worker_extension_cls_fqn: just_grpo.generation.reference_vllm.ReferenceVllmWorker
+    worker_extension_cls_fqn: block_diffusion.generation.reference_vllm.ReferenceVllmWorker
     vllm_cfg:
       async_engine: false
     vllm_kwargs:

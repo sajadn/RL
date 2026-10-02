@@ -24,8 +24,8 @@ from just_grpo.algorithms.block_just_grpo import (
     select_low_confidence_tokens,
 )
 from just_grpo.config import JustGRPOConfig
-from just_grpo.diffusion.denoising_schedule import SchedulePurpose
-from just_grpo.diffusion.megatron_diffusion_policy import (
+from block_diffusion.denoising_schedule import SchedulePurpose
+from block_diffusion.megatron_diffusion_policy import (
     MegatronDiffusionPolicyWorkerImpl,
 )
 from nemo_rl.data.interfaces import TokenizerType

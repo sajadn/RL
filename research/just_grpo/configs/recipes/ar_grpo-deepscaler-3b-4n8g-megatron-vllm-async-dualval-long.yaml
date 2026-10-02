@@ -13,7 +13,7 @@
 # Validation engines time-share the 16 generation GPUs; no extra nodes needed.
 defaults:
   - ../../../../examples/configs/grpo_math_1B.yaml
-  - ../validation/ar_diffusion.yaml
+  - ../../../block_diffusion/configs/validation/ar_diffusion.yaml
 
 grpo:
   num_prompts_per_step: 128
@@ -42,7 +42,7 @@ loss_fn:
 
 policy:
   model_name: nvidia/Nemotron-Labs-Diffusion-3B
-  worker_extension_cls_fqn: just_grpo.algorithms.ar_grpo_policy_worker.NemotronDiffusionMegatronPolicyWorker
+  worker_extension_cls_fqn: block_diffusion.ar_policy_worker.NemotronDiffusionMegatronPolicyWorker
   train_global_batch_size: ${mul:${grpo.num_prompts_per_step},${grpo.num_generations_per_prompt}}
   # Start with one sequence per microbatch when disabling recomputation at 4K.
   train_micro_batch_size: 1
@@ -74,7 +74,7 @@ policy:
   generation:
     backend: vllm
     refit_transport: null
-    worker_extension_cls_fqn: just_grpo.generation.reference_vllm.ReferenceVllmAsyncWorker
+    worker_extension_cls_fqn: block_diffusion.generation.reference_vllm.ReferenceVllmAsyncWorker
     max_new_tokens: 3744
     temperature: 1.0
     top_p: 1.0

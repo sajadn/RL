@@ -24,18 +24,21 @@ from megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention i
 from nemo_rl.models.megatron.data import ProcessedMicrobatch
 from transformers import AutoConfig
 
-from just_grpo.diffusion.config import DiffusionSamplingParams
-from just_grpo.diffusion.denoising_schedule import (
+from block_diffusion.config import DiffusionSamplingParams
+from block_diffusion.denoising_schedule import (
     DenoisingSchedule,
     SchedulePurpose,
     aggregate_diffusion_logprobs,
 )
-from just_grpo.diffusion.diffusion_processors import (
+from block_diffusion.diffusion_processors import (
     DiffusionLogprobsPostProcessor,
     DiffusionLossPostProcessor,
     prepare_diffusion_microbatch,
 )
-from just_grpo.generation.megatron_generation import generate_responses, pack_responses
+from block_diffusion.generation.megatron_generation import (
+    generate_responses,
+    pack_responses,
+)
 from nemo_rl.algorithms.loss.interfaces import LossFunction
 from nemo_rl.data.interfaces import TokenizerType
 from nemo_rl.distributed.batched_data_dict import BatchedDataDict

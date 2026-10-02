@@ -21,8 +21,8 @@ import torch
 from just_grpo.config import ScheduleConfig
 from nemo_rl.distributed.batched_data_dict import BatchedDataDict
 
-from just_grpo.diffusion.denoising_schedule import DenoisingSchedule
-from just_grpo.diffusion.block_layout import (
+from block_diffusion.denoising_schedule import DenoisingSchedule
+from block_diffusion.block_layout import (
     BlockDiffusionLayout,
     align_prompt as align_prompt,
 )

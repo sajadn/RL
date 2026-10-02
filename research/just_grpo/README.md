@@ -7,10 +7,10 @@ Research implementation on upstream NeMo-RL `main` (`612d5274059c821dc09c2c90767
 ## Upstream controller
 
 `just_grpo/train.py` validates JustGRPO settings and calls the shared diffusion
-driver. Shared runtime validation lives in `just_grpo/diffusion/validation.py`;
+driver. Shared runtime validation lives in `block_diffusion/validation.py`;
 algorithm-specific configuration stays in `just_grpo/config.py`.
 
-`just_grpo/training.py` imports `setup()`, `grpo_train()`, and `async_grpo_train()` from `nemo_rl.algorithms.grpo`. Upstream owns Ray worker placement, data loading, rollout collection, GRPO advantages, validation, logging, and the training loop. Research code supplies the Sudoku data/environment and a `MegatronDiffusionGeneration` implementation of the existing `GenerationInterface`. vLLM uses upstream `VllmGeneration` directly. Setup constructs upstream `Policy` directly; the recipe selects `BlockJustGRPOPolicyWorker` through the existing `policy.worker_extension_cls_fqn` setting. The shared driver registers its runtime and passes the research configuration to the worker. For Megatron inference, the shared driver replaces the native generation wrapper after ordinary upstream setup and attaches a native colocated weight synchronizer. HTTP serving is disabled, so setup has not started an AR engine. Without named validation modes, vLLM retains its native setup path; multi-mode validation supplies a generation factory to upstream setup. Rollout logprobs are included in scoring inputs for Fast token selection. Previous-policy logprobs are always recomputed through upstream `Policy.get_logprobs()`.
+`block_diffusion/training.py` imports `setup()`, `grpo_train()`, and `async_grpo_train()` from `nemo_rl.algorithms.grpo`. Upstream owns Ray worker placement, data loading, rollout collection, GRPO advantages, validation, logging, and the training loop. Research code supplies the Sudoku data/environment and a `MegatronDiffusionGeneration` implementation of the existing `GenerationInterface`. vLLM uses upstream `VllmGeneration` directly. Setup constructs upstream `Policy` directly; the recipe selects `BlockJustGRPOPolicyWorker` through the existing `policy.worker_extension_cls_fqn` setting. The shared driver registers its runtime and passes the research configuration to the worker. For Megatron inference, the shared driver replaces the native generation wrapper after ordinary upstream setup and attaches a native colocated weight synchronizer. HTTP serving is disabled, so setup has not started an AR engine. Without named validation modes, vLLM retains its native setup path; multi-mode validation supplies a generation factory to upstream setup. Rollout logprobs are included in scoring inputs for Fast token selection. Previous-policy logprobs are always recomputed through upstream `Policy.get_logprobs()`.
 
 ## Diffusion training
 
@@ -34,7 +34,7 @@ Supported training layouts are dense BF16 TP/DP with PP=CP=EP=1, unpacked fixed-
 
 ## Generation
 
-Generation code lives in `just_grpo/generation/`. `megatron_generation.py` implements the existing `GenerationInterface` and the research denoising loop. Synchronous requests delegate to upstream `Policy.generate()`. Async requests await native Ray worker calls on TP=1 DP replicas, distributing inference microbatches across replicas and yielding rows with their original indices. This also handles single-row requests when DP exceeds the batch size. `MegatronDiffusionPolicyWorkerImpl` runs upstream `model_forward()` on its already-loaded model. Native `MegatronWeightSynchronizer` handles the colocated lifecycle, and `prepare_for_lp_inference()` restores model parameters, enters eval mode, and releases training buffers. Generation sees optimizer updates directly; there is no second model, checkpoint export, subprocess, or custom attention implementation.
+Shared generation code lives in `../block_diffusion/block_diffusion/generation/`. `megatron_generation.py` implements the existing `GenerationInterface` and the research denoising loop. Synchronous requests delegate to upstream `Policy.generate()`. Async requests await native Ray worker calls on TP=1 DP replicas, distributing inference microbatches across replicas and yielding rows with their original indices. This also handles single-row requests when DP exceeds the batch size. `MegatronDiffusionPolicyWorkerImpl` runs upstream `model_forward()` on its already-loaded model. Native `MegatronWeightSynchronizer` handles the colocated lifecycle, and `prepare_for_lp_inference()` restores model parameters, enters eval mode, and releases training buffers. Generation sees optimizer updates directly; there is no second model, checkpoint export, subprocess, or custom attention implementation.
 
 The Megatron decoder uses uncached full forwards with the same asymmetric attention layout as training. Each current block starts fully masked and reveals positions from left to right. Sampling records temperature-scaled logprobs at commitment and stops independently per sample at EOS. Sampled MASK IDs count as committed tokens. Prompts are grouped by length, microbatched using `policy.logprob_batch_size`, and returned in their original order. This first implementation supports TP=1; KV caching and TP>1 decoding are deferred. It prioritizes matching the training forward, not inference throughput.
 
@@ -66,9 +66,9 @@ The standard recipe inherits upstream `examples/configs/grpo_math_1B.yaml`. Fast
 From the checkout root, with the NeMo-RL `mcore` environment:
 
 ```bash
-export PYTHONPATH="$PWD:$PWD/research/just_grpo${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$PWD:$PWD/research/block_diffusion:$PWD/research/just_grpo${PYTHONPATH:+:$PYTHONPATH}"
 uv run --extra mcore python research/just_grpo/run_just_grpo.py \
-  --config "$PWD/research/just_grpo/configs/recipes/just_grpo-sudoku6x6-4n8g-megatron-inference-long.yaml" \
+  --config "$PWD/research/block_diffusion:$PWD/research/just_grpo/configs/recipes/just_grpo-sudoku6x6-4n8g-megatron-inference-long.yaml" \
   --model /path/to/Nemotron-Labs-Diffusion-3B \
   --output-dir /path/to/fresh/run
 ```
@@ -87,7 +87,7 @@ The objective is normalized by selected-token count, without selection-probabili
 
 ## Sudoku and the matched experiment
 
-The custom 6x6 environment uses the reference generator, 2x3 boxes, few-shot prompt, and **blank-cell accuracy** reward. `just_grpo/environments/sudoku.py` contains the dataset, prompts, scoring, and NeMo-RL environment interface. `sudoku6x6_generator.py` implements puzzle generation; `sudoku6x6_fewshot.txt` holds the reference system prompt. Only this 6x6 task is supported; the 4x4 Reasoning Gym adapter and its dependency have been removed.
+The custom 6x6 environment uses the reference generator, 2x3 boxes, few-shot prompt, and **blank-cell accuracy** reward. `block_diffusion/environments/sudoku.py` contains the dataset, prompts, scoring, and NeMo-RL environment interface. `sudoku6x6_generator.py` implements puzzle generation; `sudoku6x6_fewshot.txt` holds the reference system prompt. Only this 6x6 task is supported; the 4x4 Reasoning Gym adapter and its dependency have been removed.
 
 The 32-GPU recipe matches [cmp0913_sudoku6x6_block_justgrpo_val_t1_extend0914](https://wandb.ai/nemo-llm-service/diffusion_rl/runs/sw1o4ibd): 128 prompts x 8 completions, 100 updates, LR 3e-7, 13 warmup updates starting at 3e-8, weight decay 0.01, reward normalization off, reference k3 KL 0.01, TIS capped at 2, and 512 output tokens. Block size is 16 and training temperature is 1.0. Validation uses the training decoder at temperature 1.0 every ten updates, on 256 puzzles repeated four times.
 
@@ -108,7 +108,7 @@ Synchronous colocated and asynchronous dedicated-GPU `reference_vllm` runs suppo
 named validation modes through
 `policy.generation.vllm_val_dllm_variants`, matching the engine-override format in
 `diffusion_RL`.
-The reusable override is `configs/validation/ar_diffusion.yaml`; add it after your
+The reusable override is `../block_diffusion/configs/validation/ar_diffusion.yaml`; add it after your
 recipe in the YAML `defaults` list. Runnable examples end in
 `-megatron-vllm-dualval-long.yaml` under `configs/recipes/`. Async examples end in
 `-megatron-vllm-async-dualval-long.yaml`; their 32 GPUs are split evenly between
@@ -166,14 +166,14 @@ DeepScaleR training data, and AIME2024 validation. Its recipe uses LR `1e-6`,
 The same checkpoint is validated in `diffusion_conf09` and `ar` modes.
 
 ```bash
-PYTHONPATH="$PWD:$PWD/research/just_grpo" EXPANDABLE_SEGMENTS=false \
+PYTHONPATH="$PWD:$PWD/research/block_diffusion:$PWD/research/just_grpo" EXPANDABLE_SEGMENTS=false \
 uv run research/just_grpo/run_ar_grpo.py \
   --config research/just_grpo/configs/recipes/ar_grpo-deepscaler-3b-4n8g-megatron-vllm-async-dualval-long.yaml \
   --generation-python "$NRL_VLLM_PY_EXECUTABLE"
 ```
 
-AR, JustGRPO, and Trace use `just_grpo/training.py` for controller setup and the
-lifecycle of `MultiModeValidation` in `just_grpo/generation/validation.py`.
+AR, JustGRPO, and Trace import the shared `block-diffusion` package and use `block_diffusion/training.py` for controller setup and the
+lifecycle of `MultiModeValidation` in `block_diffusion/generation/validation.py`.
 AR uses shifted next-token labels and a causal policy adapter; diffusion
 algorithms keep their existing unshifted labels and schedules. This launcher
 uses the legacy GRPO controllers; `research/ar_grpo/run_ar_grpo.py` is the

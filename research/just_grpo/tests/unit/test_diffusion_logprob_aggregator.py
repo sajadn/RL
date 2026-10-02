@@ -16,7 +16,7 @@
 import pytest
 import torch
 from test_fast_selection import confidence_batch, make_schedule
-from just_grpo.diffusion.denoising_schedule import aggregate_diffusion_logprobs
+from block_diffusion.denoising_schedule import aggregate_diffusion_logprobs
 from just_grpo.algorithms.block_just_grpo import select_low_confidence_tokens
 from nemo_rl.distributed.batched_data_dict import BatchedDataDict
 

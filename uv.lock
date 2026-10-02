@@ -64,6 +64,7 @@ conflicts = [[
 
 [manifest]
 members = [
+    "block-diffusion",
     "just-grpo",
     "nemo-rl",
     "template-project",
@@ -673,6 +674,27 @@ sdist = { url = "https://files.pythonhosted.org/packages/9d/a9/a34e8153b0203d906
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ed/4d/1392562369b1139e741b30d624f09fe7091d17dd5579fae5732f044b12bb/blobfile-3.0.0-py3-none-any.whl", hash = "sha256:48ecc3307e622804bd8fe13bf6f40e6463c4439eba7a1f9ad49fd78aa63cc658", size = 75413, upload-time = "2024-08-27T00:02:51.518Z" },
 ]
+
+[[package]]
+name = "block-diffusion"
+version = "0.1.0"
+source = { editable = "research/block_diffusion" }
+dependencies = [
+    { name = "nemo-rl" },
+]
+
+[package.dev-dependencies]
+test = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "nemo-rl", editable = "." },
+]
+
+[package.metadata.requires-dev]
+test = [{ name = "pytest", specifier = ">=7.0.0" }]
 
 [[package]]
 name = "botocore"
@@ -2744,6 +2766,7 @@ name = "just-grpo"
 version = "0.1.0"
 source = { editable = "research/just_grpo" }
 dependencies = [
+    { name = "block-diffusion" },
     { name = "nemo-rl" },
 ]
 
@@ -2754,6 +2777,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "block-diffusion", editable = "research/block_diffusion" },
     { name = "nemo-rl", editable = "." },
 ]
 
@@ -7829,7 +7853,7 @@ name = "trace-grpo"
 version = "0.1.0"
 source = { editable = "research/trace_grpo" }
 dependencies = [
-    { name = "just-grpo" },
+    { name = "block-diffusion" },
     { name = "nemo-rl" },
 ]
 
@@ -7840,7 +7864,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "just-grpo", editable = "research/just_grpo" },
+    { name = "block-diffusion", editable = "research/block_diffusion" },
     { name = "nemo-rl", editable = "." },
 ]
 
