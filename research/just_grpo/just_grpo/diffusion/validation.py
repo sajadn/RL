@@ -194,18 +194,37 @@ def validate_experiment(
         raise ValueError(
             "seq-mask-tis requires whole-response filtering and is unsupported by per-level diffusion training"
         )
-    for split in (config.data.train, config.data.validation):
-        if split.size <= 0 or split.repeat <= 0:
-            raise ValueError("Dataset size and repeat must be positive")
-    if config.data.train.size * config.data.train.repeat < g.num_prompts_per_step:
-        raise ValueError("Training dataset must contain a full prompt batch")
+    if config.data.default.env_name == "sudoku6x6":
+        for split in (config.data.train, config.data.validation):
+            if split.size <= 0 or split.repeat <= 0:
+                raise ValueError("Dataset size and repeat must be positive")
+        if config.data.train.size * config.data.train.repeat < g.num_prompts_per_step:
+            raise ValueError("Training dataset must contain a full prompt batch")
+        if config.data.default.prompt_style not in ("question", "sudoku_answer_tag"):
+            raise ValueError("Unsupported Sudoku prompt style")
+        if (
+            any(
+                split.dataset_name != "sudoku6x6"
+                for split in (config.data.train, config.data.validation)
+            )
+            or "sudoku6x6" not in config.env
+        ):
+            raise ValueError(
+                "Training, validation, and environment must all select sudoku6x6"
+            )
+    elif config.data.default.env_name == "math":
+        if (
+            config.data.default.processor != "math_hf_data_processor"
+            or config.data.validation is None
+            or "math" not in config.env
+        ):
+            raise ValueError(
+                "Math requires the native processor and an explicit validation split"
+            )
+    else:
+        raise ValueError("Supported environments are sudoku6x6 and math")
     if g.max_num_epochs <= 0:
         raise ValueError("max_num_epochs must be positive")
-    if config.data.default.prompt_style not in (
-        "question",
-        "sudoku_answer_tag",
-    ):
-        raise ValueError("Unsupported Sudoku prompt style")
     world_size = world
     if diffusion.distributed:
         data_parallel_size = world_size // p.megatron_cfg.tensor_model_parallel_size
@@ -217,16 +236,6 @@ def validate_experiment(
             raise ValueError(
                 "Validation needs at least one puzzle per data-parallel rank"
             )
-    dataset_name = config.data.train.dataset_name
-    if (
-        dataset_name != "sudoku6x6"
-        or config.data.validation.dataset_name != dataset_name
-        or config.data.default.env_name != dataset_name
-        or dataset_name not in config.env
-    ):
-        raise ValueError(
-            "Training, validation, and environment must all select sudoku6x6"
-        )
     if diffusion.validation_sampling != diffusion.sampling:
         raise ValueError("Validation must use the training sampling settings")
     if g.max_val_samples < g.val_batch_size:

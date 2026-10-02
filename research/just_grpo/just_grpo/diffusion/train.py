@@ -57,6 +57,7 @@ def run(
         setup,
     )
     from nemo_rl.algorithms.utils import get_tokenizer
+    from nemo_rl.data.utils import setup_response_data
     from nemo_rl.distributed.ray_actor_environment_registry import (
         ACTOR_ENVIRONMENT_REGISTRY,
         get_actor_python_env,
@@ -92,10 +93,16 @@ def run(
             )
         )
     init_ray()
-    train_data = SudokuResponseDataset(config, tokenizer)
-    val_data = SudokuResponseDataset(config, tokenizer, validation=True)
-    env = SudokuEnvironment.remote()
-    environments = {config.data.default.env_name: env}
+    if config.data.default.env_name == "sudoku6x6":
+        train_data = SudokuResponseDataset(config, tokenizer)
+        val_data = SudokuResponseDataset(config, tokenizer, validation=True)
+        env = SudokuEnvironment.remote()
+        environments = {config.data.default.env_name: env}
+        val_environments = environments
+    else:
+        train_data, val_data, environments, val_environments = setup_response_data(
+            tokenizer, master.data, master.env
+        )
     variants = validation_variants(master.policy["generation"])
     validation = (
         MultiModeValidation(
@@ -172,7 +179,7 @@ def run(
                 tokenizer,
                 loss_fn,
                 environments,
-                environments,
+                val_environments,
                 logger,
                 checkpointer,
                 state,
