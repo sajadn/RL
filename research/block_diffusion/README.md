@@ -36,5 +36,5 @@ The rollout engines resume after validation. The GRPO controller controls
 validation timing and drains async rollouts before the validation callback.
 No extra generation nodes are needed for the named validation engines.
 
-The causal AR policy adapter belongs to `../ar_grpo/ar_grpo/ar_policy_worker.py`;
+The causal AR policy adapter belongs to `../ar_grpo/ar_grpo/policy.py`;
 the AR launcher reuses this package for controller setup and validation.

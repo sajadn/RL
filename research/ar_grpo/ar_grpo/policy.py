@@ -12,15 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Causal Nemotron adapter used by the diffusion_RL AR GRPO baseline."""
+"""Causal Nemotron policy for SingleController and legacy AR GRPO."""
 
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
 import ray
-from megatron.bridge.utils.instantiate_utils import register_allowed_target_prefix
-from transformers import AutoConfig
 
 from nemo_rl.models.policy import PolicyConfig
 
@@ -32,14 +30,19 @@ from nemo_rl.models.policy.workers.megatron_policy_worker import (
 
 class NemotronDiffusionMegatronPolicyWorkerImpl(MegatronPolicyWorkerImpl):
     def __init__(self, config: PolicyConfig, *args: Any, **kwargs: Any) -> None:
+        # Bridge and checkpoint code are only needed inside the policy actor.
+        from megatron.bridge.utils.instantiate_utils import (
+            register_allowed_target_prefix,
+        )
+        from transformers import AutoConfig
+
         hf_config = AutoConfig.from_pretrained(
             config["model_name"], trust_remote_code=True
         )
         register_allowed_target_prefix(type(hf_config).__module__ + ".")
-        config["megatron_cfg"]["model_overrides"] = {
-            **config["megatron_cfg"]["model_overrides"],
-            "seq_length": config["max_total_sequence_length"],
-        }
+        config["megatron_cfg"].setdefault("model_overrides", {})["seq_length"] = config[
+            "max_total_sequence_length"
+        ]
         super().__init__(config, *args, **kwargs)
 
     @contextmanager
@@ -83,6 +86,10 @@ class NemotronDiffusionMegatronPolicyWorkerImpl(MegatronPolicyWorkerImpl):
     def train(self, *args: Any, **kwargs: Any) -> Any:
         with self.use_nemotron_causal_attention_forward():
             return super().train(*args, **kwargs)
+
+    def train_microbatch(self, *args: Any, **kwargs: Any) -> Any:
+        with self.use_nemotron_causal_attention_forward():
+            return super().train_microbatch(*args, **kwargs)
 
     def get_logprobs(self, *args: Any, **kwargs: Any) -> Any:
         with self.use_nemotron_causal_attention_forward():
