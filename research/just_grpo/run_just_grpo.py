@@ -15,9 +15,16 @@
 
 from pathlib import Path
 
-from just_grpo import train
+from omegaconf import DictConfig
 
+from block_diffusion import training
 from block_diffusion.cli import main as diffusion_main
+from just_grpo.config import validate_config
+
+
+def run(config: DictConfig) -> None:
+    """Validate JustGRPO settings and start the shared training loop."""
+    training.run(config, diffusion=validate_config(config))
 
 
 def main() -> None:
@@ -25,7 +32,7 @@ def main() -> None:
         Path(__file__).parent
         / "configs/recipes/just_grpo-sudoku6x6-4n8g-megatron-inference-long.yaml",
         config_key="just_grpo",
-        run=train.run,
+        run=run,
     )
 
 

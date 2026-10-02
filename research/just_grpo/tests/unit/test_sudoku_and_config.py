@@ -191,7 +191,7 @@ def test_entry_point_loads_inheritance_and_cli_overrides(monkeypatch, tmp_path):
     import run_just_grpo
 
     captured = []
-    monkeypatch.setattr("just_grpo.train.run", captured.append)
+    monkeypatch.setattr(run_just_grpo, "run", captured.append)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         sys,

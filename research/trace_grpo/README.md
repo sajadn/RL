@@ -48,7 +48,7 @@ and `nemo_rl/models/policy/workers/trace_grpo_megatron_policy_worker.py` at
 ## Package layout
 
 - `trace_grpo/config.py`: Trace experiment parsing and validation.
-- `trace_grpo/train.py`: Trace batch-preparation callback and shared-driver entrypoint.
+- `run_trace_grpo.py`: CLI entrypoint, configuration validation, and Trace batch-preparation callback wiring.
 - `trace_grpo/algorithm.py`: Trace configuration, level sampling, batch preparation, and replay schedule.
 - `trace_grpo/policy_worker.py`: Trace schedule selection for the shared diffusion worker.
 - `configs/recipes/`: Trace Megatron and vLLM recipes, synchronous and asynchronous.

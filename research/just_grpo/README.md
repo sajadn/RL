@@ -6,8 +6,8 @@ Research implementation on upstream NeMo-RL `main` (`612d5274059c821dc09c2c90767
 
 ## Upstream controller
 
-`just_grpo/train.py` validates JustGRPO settings and calls the shared diffusion
-driver. Shared runtime validation lives in `block_diffusion/validation.py`;
+`run_just_grpo.py` is the command-line entrypoint. Its `run(config)` function
+validates JustGRPO settings and calls the shared diffusion driver. Shared runtime validation lives in `block_diffusion/validation.py`;
 algorithm-specific configuration stays in `just_grpo/config.py`.
 
 `block_diffusion/training.py` imports `setup()`, `grpo_train()`, and `async_grpo_train()` from `nemo_rl.algorithms.grpo`. Upstream owns Ray worker placement, data loading, rollout collection, GRPO advantages, validation, logging, and the training loop. Research code supplies the Sudoku data/environment and a `MegatronDiffusionGeneration` implementation of the existing `GenerationInterface`. vLLM uses upstream `VllmGeneration` directly. Setup constructs upstream `Policy` directly; the recipe selects `BlockJustGRPOPolicyWorker` through the existing `policy.worker_extension_cls_fqn` setting. The shared driver registers its runtime and passes the research configuration to the worker. For Megatron inference, the shared driver replaces the native generation wrapper after ordinary upstream setup and attaches a native colocated weight synchronizer. HTTP serving is disabled, so setup has not started an AR engine. Without named validation modes, vLLM retains its native setup path; multi-mode validation supplies a generation factory to upstream setup. Rollout logprobs are included in scoring inputs for Fast token selection. Previous-policy logprobs are always recomputed through upstream `Policy.get_logprobs()`.

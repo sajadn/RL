@@ -27,8 +27,7 @@ from trace_grpo.algorithm import (
     TraceGRPOSchedule,
 )
 from trace_grpo.config import validate_config
-from trace_grpo import train as trace_train
-from just_grpo import train as just_train
+from run_trace_grpo import run as run_trace
 from block_diffusion import training as driver
 from block_diffusion.training import PrepareTrainingData
 from omegaconf import DictConfig
@@ -463,16 +462,25 @@ def test_entropy_budget_rejects_invalid_bound(bound):
 def test_entrypoint_loads_its_own_recipe_and_applies_cli_overrides(
     monkeypatch, tmp_path, project
 ):
-    train = trace_train if project == "trace_grpo" else just_train
-
     entrypoint = Path(__file__).parents[3] / project / f"run_{project}.py"
+    recipe = (
+        entrypoint.parent
+        / "configs/recipes"
+        / (
+            "just_grpo-sudoku6x6-4n8g-megatron-vllm-dualval-long.yaml"
+            if project == "just_grpo"
+            else "trace_grpo-sudoku6x6-4n8g-megatron-vllm-long.yaml"
+        )
+    )
     captured = []
-    monkeypatch.setattr(train, "run", captured.append)
+    monkeypatch.setattr(driver, "run", lambda config, **kwargs: captured.append(config))
     monkeypatch.setattr(
         sys,
         "argv",
         [
             str(entrypoint),
+            "--config",
+            str(recipe),
             "--model",
             "/test/model",
             "--output-dir",
@@ -487,6 +495,7 @@ def test_entrypoint_loads_its_own_recipe_and_applies_cli_overrides(
     assert cfg.policy.model_name == "/test/model"
     assert cfg.logger.log_dir == str(tmp_path)
     assert cfg[project].generation_python == "/test/python"
+    assert cfg[project].runtime == "reference_vllm"
     if project == "trace_grpo":
         assert cfg.policy.worker_extension_cls_fqn == (
             "trace_grpo.policy_worker.TraceGRPOPolicyWorker"
@@ -523,7 +532,7 @@ def test_trace_entrypoint_supplies_batch_preparation(
         captured.append(config)
 
     monkeypatch.setattr(driver, "run", run)
-    trace_train.run(raw)
+    run_trace(raw)
     assert captured == [raw]
 
 

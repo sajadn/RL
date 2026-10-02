@@ -15,15 +15,37 @@
 
 from pathlib import Path
 
-from trace_grpo import train
+from omegaconf import DictConfig
 
-from block_diffusion.cli import main
+from block_diffusion import training
+from block_diffusion.cli import main as diffusion_main
+from block_diffusion.training import PrepareTrainingData
+from trace_grpo.algorithm import TraceGRPO
+from trace_grpo.config import validate_config
 
 
-if __name__ == "__main__":
-    main(
+def run(config: DictConfig) -> None:
+    """Validate Trace settings and supply its rollout batch preparation callback."""
+    diffusion = validate_config(config)
+
+    def prepare_training_data_factory(stop_token_ids: list[int]) -> PrepareTrainingData:
+        return TraceGRPO(diffusion, stop_token_ids=stop_token_ids).prepare_training_data
+
+    training.run(
+        config,
+        diffusion=diffusion,
+        prepare_training_data_factory=prepare_training_data_factory,
+    )
+
+
+def main() -> None:
+    diffusion_main(
         Path(__file__).parent
         / "configs/recipes/trace_grpo-sudoku6x6-4n8g-megatron-inference-long.yaml",
         config_key="trace_grpo",
-        run=train.run,
+        run=run,
     )
+
+
+if __name__ == "__main__":
+    main()

@@ -18,7 +18,7 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, Mock
 
 import pytest
-from just_grpo import train
+import run_just_grpo
 from just_grpo.config import validate_config
 from block_diffusion import training as driver
 from block_diffusion.generation.megatron_generation import MegatronDiffusionGeneration
@@ -146,7 +146,7 @@ def test_driver_uses_unmodified_setup_and_selects_upstream_trainer(
         )
         factory.assert_called_once_with([2])
     else:
-        train.run(config)
+        run_just_grpo.run(config)
         factory.assert_not_called()
     grpo.setup.assert_called_once()
     (

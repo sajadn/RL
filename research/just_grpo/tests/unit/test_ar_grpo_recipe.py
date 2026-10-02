@@ -96,7 +96,7 @@ def test_shared_driver_wires_dual_validation_and_training(
         run = lambda cfg: driver.run(cfg, generation_python="/vllm/python")
     else:
         if algorithm == "just":
-            from just_grpo.train import run
+            from run_just_grpo import run
 
             config = load_config(
                 PROJECT
@@ -104,7 +104,7 @@ def test_shared_driver_wires_dual_validation_and_training(
             )
             config.just_grpo.generation_python = "/vllm/python"
         else:
-            from trace_grpo.train import run
+            from run_trace_grpo import run
 
             config = load_config(
                 PROJECT.parent
