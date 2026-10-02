@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ar-grpo"
+version = "0.1.0"
+description = "Causal Nemotron AR GRPO policy adapter on NeMo RL"
+readme = "LEGACY_GRPO.md"
+requires-python = ">=3.13.14,<3.14"
+dependencies = ["block-diffusion", "nemo-rl"]
+
+[tool.uv.sources]
+block-diffusion = { workspace = true }
+nemo-rl = { workspace = true }
+
+[tool.hatch.build]
+exclude = ["**/*.swp", "**/*.swo"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["ar_grpo"]

@@ -64,6 +64,7 @@ conflicts = [[
 
 [manifest]
 members = [
+    "ar-grpo",
     "block-diffusion",
     "just-grpo",
     "nemo-rl",
@@ -501,6 +502,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/36/99/2848df4e8ed5bf51df1d286d1718510584fa61e88adbc9c5b23d71b38f7c/apache_tvm_ffi-0.1.11-cp312-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:78aa1857b04a2ea718317041ab3f01288b3d496e6036eb1b99ebdc9da0fdaef5", size = 2725887, upload-time = "2026-05-04T17:48:01.381Z" },
     { url = "https://files.pythonhosted.org/packages/7d/80/963c991934a4eb0fa0c0178f51963333fe14a96b732009da642b6bf6b42e/apache_tvm_ffi-0.1.11-cp312-abi3-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:a8b845c8dff498fb981c1dda36c954549204191b485a385845e604966594d0b2", size = 2513121, upload-time = "2026-05-04T17:48:03.43Z" },
     { url = "https://files.pythonhosted.org/packages/4d/18/95569107ee83619d61a3bb0d28743a0599f85c5161981e3e098c82c2b185/apache_tvm_ffi-0.1.11-cp312-abi3-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2843f084cdc94dedacd8b257a395a2b71b8a3dc7fc99711b148bf1d161983128", size = 2697683, upload-time = "2026-05-04T17:48:05.222Z" },
+]
+
+[[package]]
+name = "ar-grpo"
+version = "0.1.0"
+source = { editable = "research/ar_grpo" }
+dependencies = [
+    { name = "block-diffusion" },
+    { name = "nemo-rl" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "block-diffusion", editable = "research/block_diffusion" },
+    { name = "nemo-rl", editable = "." },
 ]
 
 [[package]]

@@ -166,7 +166,7 @@ DeepScaleR training data, and AIME2024 validation. Its recipe uses LR `1e-6`,
 The same checkpoint is validated in `diffusion_conf09` and `ar` modes.
 
 ```bash
-PYTHONPATH="$PWD:$PWD/research/block_diffusion:$PWD/research/just_grpo" EXPANDABLE_SEGMENTS=false \
+PYTHONPATH="$PWD:$PWD/research/block_diffusion:$PWD/research/ar_grpo:$PWD/research/just_grpo" EXPANDABLE_SEGMENTS=false \
 uv run research/just_grpo/run_ar_grpo.py \
   --config research/just_grpo/configs/recipes/ar_grpo-deepscaler-3b-4n8g-megatron-vllm-async-dualval-long.yaml \
   --generation-python "$NRL_VLLM_PY_EXECUTABLE"

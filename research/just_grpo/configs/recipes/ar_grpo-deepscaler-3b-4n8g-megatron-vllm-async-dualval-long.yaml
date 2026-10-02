@@ -3,7 +3,8 @@
 # deepscaler_nemotron_labs_diffusion_3b_vllm_ar_async_grpo_megatron_2t4g.yaml.
 # Run with research/just_grpo/run_ar_grpo.py (not the diffusion training driver).
 # Set NRL_VLLM_PY_EXECUTABLE to the provisioned diffusion-capable vLLM runtime;
-# include the repo and research/just_grpo in PYTHONPATH. EXPANDABLE_SEGMENTS=false.
+# Include the repo, research/block_diffusion, and research/ar_grpo in PYTHONPATH.
+# EXPANDABLE_SEGMENTS=false.
 #
 # Starting topology: 2 training + 2 generation nodes, each with 8 H100-80GB GPUs.
 # The source recipe records worse node-hour efficiency for 2 train + 4 generation
@@ -42,7 +43,7 @@ loss_fn:
 
 policy:
   model_name: nvidia/Nemotron-Labs-Diffusion-3B
-  worker_extension_cls_fqn: block_diffusion.ar_policy_worker.NemotronDiffusionMegatronPolicyWorker
+  worker_extension_cls_fqn: ar_grpo.ar_policy_worker.NemotronDiffusionMegatronPolicyWorker
   train_global_batch_size: ${mul:${grpo.num_prompts_per_step},${grpo.num_generations_per_prompt}}
   # Start with one sequence per microbatch when disabling recomputation at 4K.
   train_micro_batch_size: 1

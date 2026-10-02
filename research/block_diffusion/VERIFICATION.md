@@ -1,6 +1,7 @@
 # Block diffusion extraction verification
 
-2026-10-02: extracted common runtime code without changing algorithm behavior.
+2026-10-02, commit `5c8085c2b`: extracted common runtime code without changing algorithm behavior.
+The causal AR adapter was subsequently moved to `research/ar_grpo/ar_grpo/ar_policy_worker.py`.
 
 - 287 CPU tests passed across block diffusion, JustGRPO, and TraceGRPO.
   The Megatron adapter test module was skipped because the CPU interpreter has

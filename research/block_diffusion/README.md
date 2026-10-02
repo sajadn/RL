@@ -13,7 +13,6 @@ It depends on `nemo-rl` and does not import either algorithm package.
   `MultiModeValidation`.
 - `block_diffusion/training.py`: sync/async GRPO setup, validation lifecycle,
   algorithm callback dispatch, and cleanup.
-- `block_diffusion/ar_policy_worker.py`: causal Nemotron training/logprob adapter.
 - `block_diffusion/environments/`: shared Sudoku dataset, reward, and prompts.
   Math experiments use NeMo-RL's native datasets and environments.
 - `configs/sudoku6x6_megatron.yaml`: algorithm-independent runtime/data settings.
@@ -36,3 +35,6 @@ refits the current policy weights, and sleeps the engine before the next pass.
 The rollout engines resume after validation. The GRPO controller controls
 validation timing and drains async rollouts before the validation callback.
 No extra generation nodes are needed for the named validation engines.
+
+The causal AR policy adapter belongs to `../ar_grpo/ar_grpo/ar_policy_worker.py`;
+the AR launcher reuses this package for controller setup and validation.
