@@ -576,9 +576,12 @@ def _build_generation(
 
     if backend == "vllm":
         vllm_config = cast(VllmConfig, generation_config)
-        vllm_config.setdefault("vllm_kwargs", {})["hf_overrides"] = (
-            master_config.policy.get("hf_config_overrides", {})
-        )
+        vllm_kwargs = vllm_config.setdefault("vllm_kwargs", {})
+        # Preserve explicit inference overrides, such as the AR architecture.
+        vllm_kwargs["hf_overrides"] = {
+            **(master_config.policy.get("hf_config_overrides") or {}),
+            **(vllm_kwargs.get("hf_overrides") or {}),
+        }
         configure_vllm_for_router_replay(master_config.policy)
         gen = VllmGeneration(
             cluster=inference_cluster,

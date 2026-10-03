@@ -309,6 +309,30 @@ def patched_factories():
         }
 
 
+@pytest.mark.parametrize(
+    "inference_overrides", [None, {}, {"architectures": ["CausalLM"]}]
+)
+def test_build_generation_preserves_explicit_vllm_overrides(inference_overrides):
+    master_config = _make_master_config(backend="vllm")
+    master_config.policy["model_name"] = "test-model"
+    policy_overrides = {"architectures": ["DiffusionModel"], "vocab_size": 128}
+    master_config.policy["hf_config_overrides"] = policy_overrides.copy()
+    generation_config = master_config.policy["generation"]
+    generation_config["vllm_kwargs"] = {"hf_overrides": inference_overrides}
+    inference_cluster = MagicMock()
+    with (
+        patch.object(sc_setup_mod, "VllmGeneration") as mock_vllm,
+        patch.object(sc_setup_mod, "configure_vllm_for_router_replay"),
+    ):
+        sc_setup_mod._build_generation(inference_cluster, master_config)
+    passed_config = mock_vllm.call_args.kwargs["config"]
+    assert passed_config["vllm_kwargs"]["hf_overrides"] == {
+        **policy_overrides,
+        **(inference_overrides or {}),
+    }
+    assert master_config.policy["hf_config_overrides"] == policy_overrides
+
+
 def test_build_generation_passes_sglang_config():
     """SGLangGeneration receives the complete generation config by keyword."""
     master_config = _make_master_config(backend="sglang")
