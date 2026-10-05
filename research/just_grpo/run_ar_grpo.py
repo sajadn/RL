@@ -35,8 +35,9 @@ def run(config: DictConfig, *, generation_python: str) -> None:
         "hf_overrides"
     ]["architectures"] != ["NemotronLabsDiffusionForCausalLM"]:
         raise ValueError("AR GRPO requires causal rollout engines")
-    if config.policy.worker_extension_cls_fqn != (
-        "ar_grpo.policy.ARModeForMultiModeMegatronPolicy"
+    if config.policy.worker_extension_cls_fqn not in (
+        "ar_grpo.policy.ARModeForMultiModeMegatronPolicy",
+        "ar_grpo.positive_diffusion_policy.PositiveDiffusionARPolicy",
     ):
         raise ValueError("AR GRPO requires the Nemotron causal policy worker")
     if config.grpo.async_grpo.enabled and rollout["colocated"]["enabled"]:

@@ -13,34 +13,35 @@
 # limitations under the License.
 """The upstream-worker adapter preserves trajectory coverage and gradients."""
 
+from unittest.mock import Mock
+
 import pytest
 import torch
-from test_fast_selection import confidence_batch, make_schedule
-
 from just_grpo.algorithms.block_just_grpo import (
     BlockJustGRPOSchedule,
     select_low_confidence_tokens,
 )
-from unittest.mock import Mock
+from test_fast_selection import confidence_batch, make_schedule
 
 from nemo_rl.distributed.batched_data_dict import BatchedDataDict
 
 pytest.importorskip("megatron.bridge")
-from just_grpo.algorithms.block_just_grpo_policy_worker import (
-    BlockJustGRPOPolicyWorkerImpl,
+from block_diffusion.diffusion_processors import (
+    DiffusionLogprobsPostProcessor,
+    DiffusionLossPostProcessor,
+    DiffusionMicrobatchProcessor,
+    prepare_diffusion_microbatch,
+    selected_diffusion_logprobs,
 )
 from block_diffusion.megatron_diffusion_policy import (
     MegatronDiffusionPolicyWorkerImpl,
 )
-
-from megatron.core import parallel_state
-from nemo_rl.models.megatron.data import ProcessedMicrobatch
-from block_diffusion.diffusion_processors import (
-    DiffusionLossPostProcessor,
-    DiffusionLogprobsPostProcessor,
-    prepare_diffusion_microbatch,
-    selected_diffusion_logprobs,
+from just_grpo.algorithms.block_just_grpo_policy_worker import (
+    BlockJustGRPOPolicyWorkerImpl,
 )
+from megatron.core import parallel_state
+
+from nemo_rl.models.megatron.data import ProcessedMicrobatch
 
 
 @pytest.fixture(autouse=True)
@@ -184,9 +185,10 @@ def test_standard_forward_and_diffusion_processors_match_core_loss(
 ):
     pytest.importorskip("megatron.bridge")
     from megatron.core import parallel_state
-    from nemo_rl.models.megatron.train import forward_with_post_processing_fn
+
     from nemo_rl.algorithms.logits_sampling_utils import TrainingSamplingParams
     from nemo_rl.algorithms.loss import ClippedPGLossConfig, ClippedPGLossFn
+    from nemo_rl.models.megatron.train import forward_with_post_processing_fn
 
     monkeypatch.setattr(parallel_state, "get_tensor_model_parallel_rank", lambda: None)
     monkeypatch.setattr(parallel_state, "get_tensor_model_parallel_group", lambda: None)
@@ -377,6 +379,7 @@ def test_scoring_coverage_depends_on_policy_role_not_router_replay(
 ):
     from contextlib import contextmanager
     from types import SimpleNamespace
+
     from nemo_rl.models.policy.workers.megatron_policy_worker import (
         MegatronPolicyWorkerImpl,
     )
@@ -384,6 +387,9 @@ def test_scoring_coverage_depends_on_policy_role_not_router_replay(
     data = confidence_batch()
     worker = object.__new__(BlockJustGRPOPolicyWorkerImpl)
     worker.model = torch.nn.Module()
+    worker.microbatch_processor = DiffusionMicrobatchProcessor(
+        model=worker.model, mask_token_id=31
+    )
     worker.just_grpo = SimpleNamespace(
         training_token_fraction=fraction, schedule=make_schedule(data).config
     )
@@ -436,6 +442,9 @@ def test_worker_preserves_fixed_model_canvas_for_short_rollouts():
     data = confidence_batch()
     worker = object.__new__(BlockJustGRPOPolicyWorkerImpl)
     worker.model = torch.nn.Module()
+    worker.microbatch_processor = DiffusionMicrobatchProcessor(
+        model=worker.model, mask_token_id=31
+    )
     worker.just_grpo = SimpleNamespace(
         training_token_fraction=0.25, schedule=make_schedule(data).config
     )
@@ -486,13 +495,16 @@ def test_metadata_traverses_a_single_wrapped_model_and_is_shared_between_layers(
         layers.append(layer)
     worker = object.__new__(MegatronDiffusionPolicyWorkerImpl)
     worker.model = torch.nn.Module()
+    worker.microbatch_processor = DiffusionMicrobatchProcessor(
+        model=worker.model, mask_token_id=31
+    )
     worker.model.add_module("module", torch.nn.Sequential(*layers))
     worker.mask_token_id = 31
     trajectory = next(make_schedule(confidence_batch()).iter_levels())
-    prepared = worker._prepare_diffusion_microbatch(processed(trajectory))
+    prepared = worker.microbatch_processor(processed(trajectory))
     metadata = layers[0]._asymmetric_ar_metadata
     assert metadata is layers[1]._asymmetric_ar_metadata
     torch.testing.assert_close(metadata.prompt_lengths, torch.tensor([4, 8]))
     assert prepared.input_ids.shape[1] == metadata.noisy_length + metadata.clean_length
-    worker._clear_asymmetric_metadata()
+    worker.microbatch_processor.clear_asymmetric_metadata()
     assert all(layer._asymmetric_ar_metadata is None for layer in layers)

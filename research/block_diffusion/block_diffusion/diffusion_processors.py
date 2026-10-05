@@ -41,8 +41,8 @@ def prepare_diffusion_microbatch(
     if microbatch.packed_seq_params is not None:
         raise ValueError("Diffusion processors require unpacked microbatches")
     data = microbatch.data_dict
-    clean = data["input_ids"]
-    noisy = clean.masked_fill(data["masked_indices"], mask_token_id)
+    # Same-position targets define the noisy canvas independently of clean width.
+    noisy = data["target_ids"].masked_fill(data["masked_indices"], mask_token_id)
     context = data["clean_input_ids"]
     inputs = torch.cat([noisy, context], dim=1)
     noisy_positions = data["prompt_lengths"][:, None] + data["position_ids"]
@@ -57,6 +57,47 @@ def prepare_diffusion_microbatch(
         attention_mask=None,
         original_seq_length=inputs.shape[1],
     )
+
+
+class DiffusionMicrobatchProcessor:
+    """Prepare diffusion inputs and install per-microbatch attention metadata."""
+
+    def __init__(self, *, model: torch.nn.Module, mask_token_id: int) -> None:
+        self.model = model
+        self.mask_token_id = mask_token_id
+
+    def set_asymmetric_metadata(self, data: BatchedDataDict[Any]) -> None:
+        """Share the current batch's metadata across asymmetric attention layers."""
+        modules = [
+            module
+            for module in self.model.modules()
+            if hasattr(module, "set_asymmetric_ar_metadata")
+        ]
+        if not modules:
+            raise RuntimeError("Diffusion preprocessing requires asymmetric attention")
+        metadata = modules[0].build_asymmetric_ar_metadata(
+            noisy_length=data.get("target_ids", data["input_ids"]).shape[1],
+            clean_length=data["clean_input_ids"].shape[1],
+            noisy_response_offset=0,
+            prompt_lengths=data["prompt_lengths"],
+            response_lengths=data["response_lengths"],
+            noisy_valid_lengths=data["noisy_valid_lengths"],
+            clean_lengths=data["clean_lengths"],
+        )
+        for module in modules:
+            module.set_asymmetric_ar_metadata(metadata)
+
+    def clear_asymmetric_metadata(self) -> None:
+        """Clear metadata after execution, including backward recomputation."""
+        for module in self.model.modules():
+            if hasattr(module, "clear_asymmetric_ar_metadata"):
+                module.clear_asymmetric_ar_metadata()
+
+    def __call__(self, microbatch: ProcessedMicrobatch) -> ProcessedMicrobatch:
+        self.set_asymmetric_metadata(microbatch.data_dict)
+        return prepare_diffusion_microbatch(
+            microbatch, mask_token_id=self.mask_token_id
+        )
 
 
 def selected_diffusion_logprobs(

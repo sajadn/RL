@@ -1,0 +1,24 @@
+# Positive-completion diffusion CE added to causal AR GRPO.
+# Run: uv run research/just_grpo/run_ar_grpo.py --config research/ar_grpo/configs/positive_diffusion.yaml
+# Set NRL_VLLM_PY_EXECUTABLE and EXPANDABLE_SEGMENTS=false as for the parent recipe.
+defaults: ../../just_grpo/configs/recipes/ar_grpo-deepscaler-3b-4n8g-megatron-vllm-async-dualval-long.yaml
+
+policy:
+  worker_extension_cls_fqn: ar_grpo.positive_diffusion_policy.PositiveDiffusionARPolicy
+  diffusion_aux_loss:
+    weight: 0.1
+    # advantage > 0; "reward" instead selects rewards > 0 when supplied by the controller.
+    positive_samples: advantage
+    mask_token_id: 100
+    block_size: 16
+    # Uniform per-sequence masking probability; inverse-probability weighted CE.
+    mask_probability_min: 0.05
+    mask_probability_max: 1.0
+    seed: 42
+
+logger:
+  log_dir: ${oc.env:LOG_DIR,logs/ar_grpo_positive_diffusion}
+  wandb:
+    name: ${oc.env:WANDB_RUN_NAME,ar_grpo_positive_diffusion}
+checkpointing:
+  checkpoint_dir: ${oc.env:CHECKPOINT_DIR,results/ar_grpo_positive_diffusion}

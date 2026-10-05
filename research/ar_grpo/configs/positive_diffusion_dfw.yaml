@@ -1,0 +1,5 @@
+# Four-hour DFW run; preserves the DeepScaleR auxiliary-loss recipe.
+defaults: positive_diffusion.yaml
+
+checkpointing:
+  checkpoint_must_save_by: "00:03:45:00"

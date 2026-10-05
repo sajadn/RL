@@ -1,0 +1,27 @@
+# Two-update DeepScaleR integration smoke; inherits the auxiliary objective.
+defaults: positive_diffusion.yaml
+
+grpo:
+  num_prompts_per_step: 16
+  num_generations_per_prompt: 8
+  max_num_steps: 2
+  max_num_epochs: 1
+  val_at_start: false
+  val_at_end: false
+  val_period: 1000
+  max_val_samples: 16
+  val_batch_size: 8
+
+policy:
+  max_total_sequence_length: 2048
+  generation:
+    max_new_tokens: 1696
+    colocated:
+      resources:
+        num_nodes: 1
+
+checkpointing:
+  enabled: false
+
+cluster:
+  num_nodes: 2
