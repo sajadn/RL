@@ -1,0 +1,11 @@
+# Fresh SFT step1210 initialization; same settings as the OPD 28K/32K run.
+# Helpful-only fallback, in_order, 8 training + 16 generation nodes.
+defaults: ar_grpo_superv3_exp544_step100_helpful_32k_in_order.yaml
+
+policy:
+  model_name: /lustre/fsw/portfolios/coreai/users/snorouzi/checkpoints/nld8b_megatron_step1210_hf_20260927
+  tokenizer:
+    name: /lustre/fsw/portfolios/coreai/users/snorouzi/checkpoints/nld8b_megatron_step1210_hf_20260927
+  generation:
+    sglang_cfg:
+      model_path: /lustre/fsw/portfolios/coreai/users/snorouzi/checkpoints/nld8b_megatron_step1210_hf_20260927
