@@ -19,6 +19,7 @@ import torch
 from pydantic import Field, model_validator
 
 from block_diffusion.block_layout import BlockDiffusionLayout
+from block_diffusion.replay import recorded_reveal_states
 from block_diffusion.config import DiffusionExperimentConfig, BlockDiffusionConfig
 from block_diffusion.denoising_schedule import DenoisingSchedule
 from nemo_rl.distributed.batched_data_dict import BatchedDataDict
@@ -101,43 +102,10 @@ class TraceGRPO:
         message_logs: list[list[dict]],
         step: int,
     ) -> None:
+        levels, loss_mask = recorded_reveal_states(
+            data, message_logs, stop_token_ids=self.stop_token_ids
+        )
         ids = data["input_ids"]
-        steps = torch.full_like(ids, -1)
-        for row, messages in enumerate(message_logs):
-            offset = 0
-            for message in messages:
-                length = len(message["token_ids"])
-                if "reveal_steps" in message:
-                    recorded = message["reveal_steps"]
-                    if len(recorded) != length:
-                        raise ValueError(
-                            "Reveal steps must align with generated tokens"
-                        )
-                    steps[row, offset : offset + length] = recorded.to(steps.device)
-                offset += length
-        response = data["token_mask"].bool()
-        response &= (
-            torch.arange(ids.shape[1], device=ids.device)[None]
-            < data["input_lengths"][:, None]
-        )
-        stops = (
-            torch.isin(ids, torch.tensor(self.stop_token_ids, device=ids.device))
-            & response
-        )
-        after_stop = (stops.long().cumsum(1) - stops.long()) > 0
-        loss_mask = response & ~after_stop
-        included = data["sample_mask"].bool()[:, None]
-        if ((steps < 0) & loss_mask & included).any():
-            raise ValueError(
-                "Trace requires a recorded reveal step for every scored response token"
-            )
-        levels = torch.full_like(steps, -1)
-        for row in range(ids.shape[0]):
-            committed = response[row] & (steps[row] >= 0)
-            # Reveal steps restart in each block. A sampled Trace level
-            # must score that step across all response blocks together.
-            distinct = torch.unique(steps[row, committed], sorted=True)
-            levels[row, committed] = torch.searchsorted(distinct, steps[row, committed])
         config = self.config.schedule
         seeds = (
             config.seed_base

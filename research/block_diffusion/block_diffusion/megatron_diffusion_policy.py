@@ -13,7 +13,7 @@
 # limitations under the License.
 """Shared Megatron execution for caller-supplied diffusion schedules."""
 
-from typing import Any
+from typing import Any, Callable
 
 import torch
 from megatron.bridge.utils.instantiate_utils import register_allowed_target_prefix
@@ -58,6 +58,7 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
         sampling: DiffusionSamplingParams,
         generation_seed: int,
         max_generation_kl: float,
+        loss_postprocessor_factory: Callable[..., Any] | None = None,
         **kwargs: Any,
     ) -> None:
         # Register the trusted configuration class before Bridge reads the checkpoint.
@@ -82,7 +83,9 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
         super().__init__(
             config,
             tokenizer,
-            loss_postprocessor_factory=DiffusionLossPostProcessor,
+            loss_postprocessor_factory=(
+                loss_postprocessor_factory or DiffusionLossPostProcessor
+            ),
             logprobs_postprocessor_factory=DiffusionLogprobsPostProcessor,
             **kwargs,
         )

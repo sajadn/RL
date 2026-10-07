@@ -70,3 +70,5 @@ It should be noted that because we use `uv`, even if we must disable tests becau
 
 - **[template_project](template_project/)** - A starting point for new research projects with example code and test structure
 - **[just_grpo](just_grpo/)** - Block JustGRPO denoising schedules and a Sudoku verification recipe.
+
+- **[d_opsd](d_opsd/)** - On-policy self-distillation with a frozen future-conditioned teacher on block diffusion trajectories.

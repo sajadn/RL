@@ -20,7 +20,10 @@ from block_diffusion.generation.validation import validation_variants
 
 
 def validate_experiment(
-    config: DictConfig, diffusion: DiffusionExperimentConfig
+    config: DictConfig,
+    diffusion: DiffusionExperimentConfig,
+    *,
+    require_policy_scores: bool = True,
 ) -> None:
     """Validate the supported research subset of the upstream GRPO schema."""
     variants = validation_variants(
@@ -31,7 +34,7 @@ def validate_experiment(
     if variants and diffusion.runtime != "reference_vllm":
         raise ValueError("Multi-mode validation requires reference_vllm generation")
     g, p, loss = config.grpo, config.policy, config.loss_fn
-    if loss.force_on_policy_ratio:
+    if require_policy_scores and loss.force_on_policy_ratio:
         raise ValueError(
             "Diffusion GRPO requires recomputed prev_logprobs; force_on_policy_ratio must be false"
         )

@@ -2608,26 +2608,25 @@ class MegatronPolicyWorkerImpl(
             else:
                 self.sampling_params = None
 
-            # - self.model is the original reference_model, now on CUDA
-            # - self.reference_model is the original model, now on CPU
-            yield
+            try:
+                yield
+            finally:
+                # Restore sampling_params
+                self.sampling_params = saved_sampling_params
 
-            # Restore sampling_params
-            self.sampling_params = saved_sampling_params
+                # Restore original policy state (weights + FP8 extra_state) from saved model_state_dict
+                self._apply_state_dict_to_model(
+                    model_state_dict,
+                    raise_if_key_missing=True,
+                )
 
-            # Restore original policy state (weights + FP8 extra_state) from saved model_state_dict
-            self._apply_state_dict_to_model(
-                model_state_dict,
-                raise_if_key_missing=True,
-            )
+                if self.cfg["megatron_cfg"]["empty_unused_memory_level"] >= 1:
+                    gc.collect()
+                    torch.cuda.empty_cache()
 
-            if self.cfg["megatron_cfg"]["empty_unused_memory_level"] >= 1:
-                gc.collect()
-                torch.cuda.empty_cache()
-
-            ## re-enable overlap param gather after weight swap
-            if self.should_disable_forward_pre_hook:
-                self.enable_forward_pre_hook()
+                ## re-enable overlap param gather after weight swap
+                if self.should_disable_forward_pre_hook:
+                    self.enable_forward_pre_hook()
 
     @wrap_with_nvtx_name("megatron_policy_worker/get_topk_logits")
     def get_topk_logits(
