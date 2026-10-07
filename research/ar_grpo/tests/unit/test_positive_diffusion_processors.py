@@ -177,7 +177,12 @@ def test_one_forward_matches_two_pass_losses_metrics_and_parameter_gradients(
     training_data = BatchedDataDict(data)
     training_data["diffusion_aux_enabled"] = torch.ones(data.size, dtype=torch.bool)
     prepared = input_processor(TinyProcessedMicrobatch(data_dict=training_data))
-    for key in ("target_ids", "masked_indices", "diffusion_mask_probability"):
+    for key in (
+        "target_ids",
+        "masked_indices",
+        "diffusion_loss_mask",
+        "diffusion_mask_probability",
+    ):
         torch.testing.assert_close(prepared.data_dict[key], batch[key])
     assert model.metadata["noisy_length"] == width
     assert model.metadata["clean_length"] == clean_width
@@ -185,6 +190,9 @@ def test_one_forward_matches_two_pass_losses_metrics_and_parameter_gradients(
     assert inputs.shape == (data.size, width + clean_width)
     torch.testing.assert_close(inputs[:, width:], data["input_ids"])
     assert prepared.data_dict["input_ids"] is data["input_ids"]
+    tail = batch["masked_indices"] & ~batch["diffusion_loss_mask"]
+    assert tail.any()
+    assert (inputs[:, :width][tail] == cfg.mask_token_id).all()
     positions = torch.arange(clean_width).expand(data.size, -1)
     logits = model(inputs, paired_positions, allowed)
     causal_logits = reference(
@@ -220,9 +228,13 @@ def test_one_forward_matches_two_pass_losses_metrics_and_parameter_gradients(
     actual, actual_metrics = one_pass(
         batch, global_valid_seqs=seqs, global_valid_toks=toks
     )(logits)
+    assert (
+        actual_metrics["diffusion_aux_masked_tokens"]
+        == batch["diffusion_loss_mask"].sum().item()
+    )
     torch.testing.assert_close(logits.detach(), raw_before)
     auxiliary = BatchedDataDict(batch)
-    auxiliary["token_mask"] = batch["masked_indices"]
+    auxiliary["token_mask"] = batch["diffusion_loss_mask"]
     expected_ar, ar_metrics = train.LossPostProcessor(loss_fn=ar_loss_fn, **kwargs)(
         data, global_valid_seqs=seqs, global_valid_toks=toks
     )(train.apply_temperature_scaling(causal_logits.clone(), sampling))
@@ -338,3 +350,43 @@ def test_processor_shares_and_clears_metadata_for_training_and_generation(
     assert model[0].metadata["clean_length"] == 7
     processor.clear_asymmetric_metadata()
     assert model[0].metadata is model[1].metadata is None
+
+
+@pytest.mark.parametrize("actual_length", [0, 4, 5, 8, 9])
+@pytest.mark.parametrize("positive", [False, True])
+def test_final_block_padding_is_mask_context_not_a_loss_target(
+    processors, actual_length, positive
+):
+    _, _, combined, _ = processors
+    positions = torch.arange(12)[None]
+    ids = (positions + 1).masked_fill(positions >= actual_length, 0)
+    response = (positions >= 2) & (positions < actual_length)
+    data = BatchedDataDict(
+        input_ids=ids,
+        input_lengths=torch.tensor([actual_length]),
+        token_mask=response.float(),
+        sample_mask=torch.ones(1),
+        advantages=torch.full((1,), 1.0 if positive else -1.0),
+        diffusion_aux_enabled=torch.ones(1, dtype=torch.bool),
+    )
+    cfg = config(mask_probability_min=1.0, mask_probability_max=1.0)
+    model = TinyAttentionPolicy()
+    processor = combined.PositiveDiffusionMicrobatchProcessor(
+        model=model,
+        config={"diffusion_aux_loss": cfg.model_dump()},
+        pad_token_id=11,
+        data_parallel_rank=0,
+    )
+    prepared = processor(TinyProcessedMicrobatch(data_dict=data))
+    rounded_length = (
+        (actual_length + cfg.block_size - 1) // cfg.block_size * cfg.block_size
+    )
+    tail = (positions >= actual_length) & (positions < rounded_length)
+    expected_loss = response & positive
+    expected_inputs = ids.masked_fill(expected_loss | tail, cfg.mask_token_id)
+    torch.testing.assert_close(prepared.input_ids[:, :12], expected_inputs)
+    torch.testing.assert_close(prepared.input_ids[:, 12:], ids)
+    torch.testing.assert_close(prepared.data_dict["diffusion_loss_mask"], expected_loss)
+    assert not (prepared.data_dict["diffusion_loss_mask"] & tail).any()
+    assert model.metadata["noisy_valid_lengths"].item() == rounded_length
+    assert model.metadata["clean_lengths"].item() == actual_length

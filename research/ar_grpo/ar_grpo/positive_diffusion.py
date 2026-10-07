@@ -44,6 +44,7 @@ def build_positive_diffusion_batch(
     Keeping the original sequence grid also supports multiple assistant spans.
     Prompts and environment feedback remain visible, but are never targets.
     Draws on CPU make selection identical across tensor-parallel ranks.
+    Final-block padding is MASK context, but is excluded from the loss mask.
     """
     ids = data["input_ids"]
     lengths = data["input_lengths"].long()
@@ -78,6 +79,16 @@ def build_positive_diffusion_batch(
         torch.rand(ids.shape[0], width, generator=generator) < probabilities[:, None]
     ).to(ids.device) & eligible
     positions = torch.arange(width, device=ids.device)[None].expand_as(noisy_targets)
+    noisy_valid_lengths = (
+        (lengths + config.block_size - 1) // config.block_size * config.block_size
+    )
+    # Match JustGRPO/Trace: tail slots in the final block remain MASK context.
+    # Keep the random target selection separate so padding never contributes CE.
+    tail = (
+        (positions >= lengths[:, None])
+        & (positions < noisy_valid_lengths[:, None])
+        & data["sample_mask"].bool()[:, None]
+    )
     # Keep the original AR IDs, masks, advantages, and rollout/reference logprobs.
     # Only the noisy canvas needs block alignment; NeMo-RL owns ordinary padding.
     combined = BatchedDataDict(data)
@@ -86,12 +97,11 @@ def build_positive_diffusion_batch(
         clean_input_ids=ids,
         prompt_lengths=torch.zeros_like(lengths),
         response_lengths=lengths,
-        noisy_valid_lengths=(lengths + config.block_size - 1)
-        // config.block_size
-        * config.block_size,
+        noisy_valid_lengths=noisy_valid_lengths,
         clean_lengths=lengths,
         position_ids=positions,
-        masked_indices=masked,
+        masked_indices=masked | tail,
+        diffusion_loss_mask=masked,
         sample_mask=data["sample_mask"],
         diffusion_mask_probability=probabilities.to(ids.device),
         diffusion_positive_samples=positive,

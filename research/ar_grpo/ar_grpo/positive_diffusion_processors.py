@@ -118,7 +118,7 @@ class PositiveDiffusionLossPostProcessor(LossPostProcessor):
             global_valid_toks=global_valid_toks,
         )
         auxiliary = BatchedDataDict(data_dict)
-        auxiliary["token_mask"] = data_dict["masked_indices"]
+        auxiliary["token_mask"] = data_dict["diffusion_loss_mask"]
         process_diffusion = self.diffusion_processor(
             data_dict=auxiliary,
             global_valid_seqs=global_valid_seqs,

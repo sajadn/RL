@@ -161,7 +161,7 @@ def worker(module):
         def clear_asymmetric_metadata(self):
             calls.append("clear")
 
-    result.microbatch_processor = MicrobatchProcessor()
+    result.prepare_microbatch_fn = MicrobatchProcessor()
     result.sampling_params = SimpleNamespace(temperature=0.7)
     return result, teacher, calls
 

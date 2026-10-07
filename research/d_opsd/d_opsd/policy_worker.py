@@ -75,7 +75,7 @@ class DOPSDPolicyWorkerImpl(MegatronDiffusionPolicyWorkerImpl):
     def _teacher_targets(self, level: BatchedDataDict[Any]) -> BatchedDataDict[Any]:
         teacher = BatchedDataDict(level)
         teacher["masked_indices"] = level["dopsd_teacher_mask"]
-        prepared = self.microbatch_processor(
+        prepared = self.prepare_microbatch_fn(
             ProcessedMicrobatch(
                 data_dict=teacher,
                 input_ids=teacher["input_ids"],
@@ -166,7 +166,7 @@ class DOPSDPolicyWorkerImpl(MegatronDiffusionPolicyWorkerImpl):
             self.abort_train_step()
             raise
         finally:
-            self.microbatch_processor.clear_asymmetric_metadata()
+            self.prepare_microbatch_fn.clear_asymmetric_metadata()
         result["all_mb_metrics"]["num_valid_samples"] = [float(local_valid)]
         result["all_mb_metrics"]["dopsd_skipped_update"] = [0.0]
         return result
