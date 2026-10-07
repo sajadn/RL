@@ -105,10 +105,9 @@ def worker(module, *, weight=0.1):
     }
     result.tokenizer = SimpleNamespace(pad_token_id=0)
     result.sampling_params = SimpleNamespace(temperature=0.6)
-    result.microbatch_processor = module.PositiveDiffusionMicrobatchProcessor(
+    result.prepare_microbatch_fn = module.PositiveDiffusionMicrobatchProcessor(
         model=result.model, config=result.cfg, pad_token_id=0, data_parallel_rank=0
     )
-    result.prepare_microbatch_fn = result.microbatch_processor
     result.loss_postprocessor_factory = module.PositiveDiffusionLossPostProcessor
     state = {
         "loss_fn": SimpleNamespace(loss_type=LossType.TOKEN_LEVEL),

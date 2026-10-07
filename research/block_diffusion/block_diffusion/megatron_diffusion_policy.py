@@ -90,10 +90,9 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
             **kwargs,
         )
         # The native constructor creates the model before a processor can bind it.
-        self.microbatch_processor = DiffusionMicrobatchProcessor(
-            model=self.model, mask_token_id=mask_token_id
+        self.prepare_microbatch_fn: DiffusionMicrobatchProcessor = (
+            DiffusionMicrobatchProcessor(model=self.model, mask_token_id=mask_token_id)
         )
-        self.prepare_microbatch_fn = self.microbatch_processor
         self.generation_vocab_size = hf_config.vocab_size
         self.mask_token_id = mask_token_id
         self.sampling = sampling
@@ -174,7 +173,7 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
                 device=data["input_ids"].device,
             )
         finally:
-            self.microbatch_processor.clear_asymmetric_metadata()
+            self.prepare_microbatch_fn.clear_asymmetric_metadata()
         return scores.to("cpu")
 
     def train(
@@ -205,7 +204,7 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
             self.abort_train_step()
             raise
         finally:
-            self.microbatch_processor.clear_asymmetric_metadata()
+            self.prepare_microbatch_fn.clear_asymmetric_metadata()
         # Per-view sample counts must not multiply the actual rollout count.
         result["all_mb_metrics"]["num_valid_samples"] = [
             float((data["sample_mask"] > 0).sum())
@@ -271,7 +270,7 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
                 batch_size=self.cfg["logprob_batch_size"],
                 device=torch.device("cuda", torch.cuda.current_device()),
                 sampling=sampling,
-                prepare_attention=self.microbatch_processor.set_asymmetric_metadata,
+                prepare_attention=self.prepare_microbatch_fn.set_asymmetric_metadata,
                 max_new_tokens=generation["max_new_tokens"],
                 max_sequence_length=self.cfg["max_total_sequence_length"],
                 mask_token_id=self.mask_token_id,
@@ -281,7 +280,7 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
                 + self.generation_index * parallel_state.get_data_parallel_world_size(),
             )
         finally:
-            self.microbatch_processor.clear_asymmetric_metadata()
+            self.prepare_microbatch_fn.clear_asymmetric_metadata()
         self.generation_index += 1
         return pack_responses(
             prompts,

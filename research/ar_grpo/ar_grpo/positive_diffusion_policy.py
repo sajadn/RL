@@ -73,13 +73,14 @@ class PositiveDiffusionARPolicyImpl(ARModeForMultiModeMegatronPolicyImpl):
         )
         if self.mtp_enabled:
             raise ValueError("Positive diffusion AR does not support MTP heads")
-        self.microbatch_processor = PositiveDiffusionMicrobatchProcessor(
-            model=self.model,
-            config=self.cfg,
-            pad_token_id=self.tokenizer.pad_token_id,
-            data_parallel_rank=parallel_state.get_data_parallel_rank(),
+        self.prepare_microbatch_fn: PositiveDiffusionMicrobatchProcessor = (
+            PositiveDiffusionMicrobatchProcessor(
+                model=self.model,
+                config=self.cfg,
+                pad_token_id=self.tokenizer.pad_token_id,
+                data_parallel_rank=parallel_state.get_data_parallel_rank(),
+            )
         )
-        self.prepare_microbatch_fn = self.microbatch_processor
 
     def begin_train_step(
         self, loss_fn: LossFunction, gbs: int | None = None, mbs: int | None = None
@@ -111,7 +112,7 @@ class PositiveDiffusionARPolicyImpl(ARModeForMultiModeMegatronPolicyImpl):
             yield
         finally:
             self.sampling_params = saved_sampling
-            self.microbatch_processor.clear_asymmetric_metadata()
+            self.prepare_microbatch_fn.clear_asymmetric_metadata()
             for module, mode in zip(modules, saved_modes):
                 module.set_inference_mode(mode)
 

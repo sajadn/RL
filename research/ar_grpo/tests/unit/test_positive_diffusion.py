@@ -63,7 +63,9 @@ def build(data, cfg, seed=42):
 @pytest.mark.parametrize(
     "positive_samples, selected_rows", [("advantage", [0]), ("reward", [0, 1])]
 )
-def test_only_positive_response_targets_are_masked(positive_samples, selected_rows):
+def test_only_positive_response_targets_contribute_to_diffusion_loss(
+    positive_samples, selected_rows
+):
     data = trajectories()
     batch = build(
         data,
@@ -75,7 +77,11 @@ def test_only_positive_response_targets_are_masked(positive_samples, selected_ro
     )
     expected = torch.zeros(4, 8, dtype=torch.bool)
     expected[selected_rows, :7] = data["token_mask"][selected_rows].bool()
-    assert torch.equal(batch["masked_indices"], expected)
+    assert torch.equal(batch["diffusion_loss_mask"], expected)
+    tail = torch.zeros_like(expected)
+    tail[0, 7] = True
+    tail[1, 5:8] = True
+    assert torch.equal(batch["masked_indices"], expected | tail)
     assert torch.equal(batch["target_ids"][:, :7], data["input_ids"])
     assert batch["input_ids"] is data["input_ids"]
     assert batch["clean_input_ids"] is data["input_ids"]
@@ -86,7 +92,7 @@ def test_only_positive_response_targets_are_masked(positive_samples, selected_ro
     assert batch["token_mask"] is data["token_mask"]
     assert batch["advantages"] is data["advantages"]
     torch.testing.assert_close(batch["input_lengths"], data["input_lengths"])
-    assert not batch["masked_indices"][:, 7:].any()
+    assert not batch["diffusion_loss_mask"][:, 7:].any()
     # Building an auxiliary view must not mutate the rollout batch.
     assert data["input_ids"].shape == (4, 7)
 
@@ -112,7 +118,7 @@ def test_partial_masks_are_reproducible_and_leave_visible_response_tokens():
 def test_same_position_ce_gradient_and_inverse_probability_weighting():
     cfg = config(weight=0.2, mask_probability_min=1.0, mask_probability_max=1.0)
     batch = build(trajectories(), cfg)
-    batch["token_mask"] = batch["masked_indices"]
+    batch["token_mask"] = batch["diffusion_loss_mask"]
     batch["diffusion_mask_probability"].fill_(0.5)
     logits = torch.randn(4, 8, 32, requires_grad=True)
     selected = (
@@ -141,7 +147,7 @@ def test_empty_positive_batch_has_finite_zero_loss_and_gradient():
     data = trajectories()
     data["advantages"].zero_()
     batch = build(data, config())
-    batch["token_mask"] = batch["masked_indices"]
+    batch["token_mask"] = batch["diffusion_loss_mask"]
     scores = torch.randn(4, 8, requires_grad=True)
     loss, metrics = PositiveDiffusionLoss(config())(
         batch,
@@ -160,7 +166,7 @@ def test_sum_of_streaming_chunk_gradients_matches_whole_batch():
     cfg = config(mask_probability_min=1.0, mask_probability_max=1.0)
     data = trajectories()
     batch = build(data, cfg)
-    batch["token_mask"] = batch["masked_indices"]
+    batch["token_mask"] = batch["diffusion_loss_mask"]
     denominator = (data["token_mask"][:, 1:] * data["sample_mask"][:, None]).sum()
     full_scores = torch.randn(4, 8, requires_grad=True)
     full_loss, _ = PositiveDiffusionLoss(cfg)(
