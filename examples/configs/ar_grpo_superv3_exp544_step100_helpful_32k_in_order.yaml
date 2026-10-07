@@ -1,0 +1,443 @@
+# Migrated OPD helpful-only AR experiment onto SingleController.
+# 8 training + 16 generation nodes; train chunks of 8 groups, update after 120.
+grpo:
+  num_prompts_per_step: 120
+  num_generations_per_prompt: 16
+  max_rollout_turns: 1
+  max_num_epochs: 1000
+  max_num_steps: 300
+  normalize_rewards: true
+  use_leave_one_out_baseline: true
+  val_period: 0
+  val_at_start: false
+  val_at_end: false
+  overlong_filtering: false
+  max_val_samples: null
+  val_batch_size: 128
+  seed: 42
+  use_dynamic_sampling: false
+  dynamic_sampling_max_gen_batches: 10
+  batch_multiplier: 1
+  num_updates_per_rollout: 1
+  reward_shaping:
+    enabled: false
+    overlong_buffer_length: 128
+    overlong_buffer_penalty: 1
+    max_response_length: 49152
+    stop_properly_penalty_coef: null
+  adv_estimator:
+    name: grpo
+    normalize_rewards: true
+    use_leave_one_out_baseline: true
+    minus_baseline: true
+  reward_scaling:
+    enabled: false
+    source_min: 0.0
+    source_max: 1.0
+    target_min: 0.0
+    target_max: 1.0
+  seq_logprob_error_threshold: null
+  async_grpo: null
+  skip_reference_policy_logprobs_calculation: true
+loss_fn:
+  reference_policy_kl_penalty: 0.0
+  reference_policy_kl_type: k3
+  kl_input_clamp_value: 20.0
+  kl_output_clamp_value: 10.0
+  ratio_clip_min: 0.2
+  ratio_clip_max: 0.2
+  ratio_clip_c: null
+  use_on_policy_kl_approximation: false
+  use_importance_sampling_correction: true
+  truncated_importance_sampling_ratio: null
+  truncated_importance_sampling_ratio_min: null
+  # Preserve the previous run: importance correction without truncation.
+  truncated_importance_sampling_type: null
+  sequence_level_importance_ratios: false
+  token_level_loss: true
+  force_on_policy_ratio: false
+  use_kl_in_reward: false
+checkpointing:
+  enabled: true
+  checkpoint_dir: ${oc.env:CHECKPOINT_DIR,results/ar-superv3-opd-helpful-32k-in-order}
+  metric_name: null
+  higher_is_better: true
+  keep_top_k: null
+  save_period: 5
+  checkpoint_must_save_by: 00:03:45:00
+  save_optimizer: true
+  save_data_plane: true
+policy:
+  model_name: /lustre/fsw/portfolios/coreai/users/snorouzi/checkpoints/yongganf_exp544_step100_hf_20260928
+  tokenizer:
+    name: /lustre/fsw/portfolios/coreai/users/snorouzi/checkpoints/yongganf_exp544_step100_hf_20260928
+    chat_template_kwargs:
+      enable_thinking: true
+      reasoning_budget: 28672
+    chat_template: /lustre/fsw/portfolios/coreai/users/snorouzi/RL-trace-grpo-review-stack/examples/configs/chat_templates/exp544_step100_helpful.jinja
+  hf_config_overrides:
+    block_size: 16
+  train_global_batch_size: 1920
+  train_micro_batch_size: 1
+  generation_batch_size: 32
+  logprob_batch_size: 1
+  max_total_sequence_length: 49152
+  precision: bfloat16
+  logprob_chunk_size: null
+  offload_optimizer_for_logprob: false
+  dtensor_cfg:
+    _v2: true
+    enabled: false
+    cpu_offload: false
+    sequence_parallel: false
+    activation_checkpointing: false
+    tensor_parallel_size: 1
+    context_parallel_size: 1
+    custom_parallel_plan: null
+    automodel_kwargs: {}
+    lora_cfg:
+      enabled: false
+      target_modules: []
+      exclude_modules: []
+      match_all_linear: true
+      dim: 8
+      alpha: 32
+      dropout: 0.0
+      dropout_position: post
+      lora_A_init: xavier
+      use_triton: true
+  megatron_cfg:
+    enabled: true
+    force_reconvert_from_hf: false
+    empty_unused_memory_level: 1
+    activation_checkpointing: true
+    tensor_model_parallel_size: 8
+    expert_tensor_parallel_size: 1
+    expert_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    num_layers_in_first_pipeline_stage: null
+    num_layers_in_last_pipeline_stage: null
+    context_parallel_size: 1
+    pipeline_dtype: bfloat16
+    sequence_parallel: true
+    freeze_moe_router: true
+    moe_router_dtype: fp64
+    moe_router_load_balancing_type: none
+    moe_router_bias_update_rate: 0.0
+    moe_permute_fusion: true
+    apply_rope_fusion: true
+    bias_activation_fusion: true
+    defer_fp32_logits: false
+    moe_per_layer_logging: false
+    moe_enable_deepep: false
+    moe_token_dispatcher_type: alltoall
+    moe_shared_expert_overlap: false
+    gradient_accumulation_fusion: false
+    peft:
+      enabled: false
+      target_modules: []
+      exclude_modules: []
+      dim: 8
+      alpha: 32
+      dropout: 0.0
+      dropout_position: post
+      lora_A_init_method: xavier
+      lora_B_init_method: zero
+      a2a_experimental: false
+      lora_dtype: null
+    optimizer:
+      optimizer: adam
+      lr: 1.0e-06
+      min_lr: 1.0e-07
+      weight_decay: 0.01
+      bf16: true
+      fp16: false
+      params_dtype: float32
+      adam_beta1: 0.9
+      adam_beta2: 0.999
+      adam_eps: 1.0e-08
+      sgd_momentum: 0.9
+      use_distributed_optimizer: true
+      use_precision_aware_optimizer: true
+      clip_grad: 1.0
+      optimizer_cpu_offload: false
+      optimizer_offload_fraction: 0.0
+    scheduler:
+      start_weight_decay: 0.01
+      end_weight_decay: 0.01
+      weight_decay_incr_style: constant
+      lr_decay_style: constant
+      lr_decay_iters: 1000
+      lr_warmup_iters: 13
+      lr_warmup_init: 3.0e-08
+    distributed_data_parallel_config:
+      grad_reduce_in_fp32: false
+      overlap_grad_reduce: true
+      overlap_param_gather: true
+      use_custom_fsdp: false
+      data_parallel_sharding_strategy: optim_grads_params
+    fp8_cfg:
+      enabled: false
+      fp8: e4m3
+      fp8_recipe: blockwise
+      fp8_param: false
+    env_vars:
+      TORCHINDUCTOR_COMPILE_THREADS: '1'
+      DIFFU_FLEX_COMPILE_MODE: default
+      DIFFU_FLEX_COMPILE_DYNAMIC: 'yes'
+    allow_unpacked_context_parallel: true
+    train_iters: 300
+    model_overrides:
+      seq_length: 49152
+  draft:
+    enabled: false
+    model_name: null
+    loss_weight: 0.1
+    num_layers: null
+    aux_layer_indices: null
+  dynamic_batching:
+    enabled: false
+    train_mb_tokens: 49152
+    logprob_mb_tokens: 49152
+    sequence_length_round: 64
+  sequence_packing:
+    enabled: false
+    train_mb_tokens: 49152
+    logprob_mb_tokens: 49152
+    algorithm: modified_first_fit_decreasing
+    sequence_length_round: 64
+  make_sequence_length_divisible_by: 16
+  max_grad_norm: 1.0
+  optimizer: null
+  scheduler: null
+  generation:
+    backend: vllm
+    max_new_tokens: 32768
+    temperature: 1.0
+    top_p: 1.0
+    top_k: null
+    stop_token_ids: []
+    stop_strings: []
+    mcore_generation_config:
+      buffer_size_gb: 10
+      num_cuda_graphs: 4
+      block_size_tokens: 256
+      use_cuda_graphs_for_non_decode_steps: true
+      enable_chunked_prefill: false
+      unified_memory_level: 0
+      max_tokens: 16384
+    vllm_cfg:
+      async_engine: true
+      precision: bfloat16
+      kv_cache_dtype: auto
+      tensor_parallel_size: 1
+      pipeline_parallel_size: 1
+      expert_parallel_size: 1
+      gpu_memory_utilization: 0.8
+      max_model_len: 49152
+      enforce_eager: true
+      use_deep_gemm: false
+      num_last_layers_in_bf16: 0
+      num_first_layers_in_bf16: 0
+      enable_vllm_metrics_logger: true
+      vllm_metrics_logger_interval: 5.0
+      expose_http_server: true
+      http_server_serving_chat_kwargs:
+        enable_auto_tools: true
+        tool_parser: step3p5
+        reasoning_parser: step3p5
+        chat_template: /lustre/fsw/portfolios/coreai/users/snorouzi/RL-trace-grpo-review-stack/examples/configs/chat_templates/exp544_step100_helpful.jinja
+      max_num_seqs: 8
+    vllm_kwargs:
+      attention_backend: TRITON_ATTN
+      kernel_config:
+        enable_flashinfer_autotune: false
+      diffusion_config: null
+      hf_overrides:
+        architectures:
+        - NemotronLabsDiffusionForCausalLM
+      reasoning_parser: step3p5
+    colocated:
+      enabled: false
+      resources:
+        gpus_per_node: 8
+        num_nodes: 16
+    sglang_cfg:
+      model_path: /lustre/fsw/portfolios/coreai/users/snorouzi/checkpoints/yongganf_exp544_step100_hf_20260928
+      gpus_per_server: 1
+      dtype: bfloat16
+      context_length: 49152
+      allow_auto_truncate: true
+      enable_memory_saver: false
+      dp_size: 1
+      pp_size: 1
+      ep_size: 1
+      max_running_requests: 4
+      mem_fraction_static: 0.55
+      max_total_tokens: 20000
+      skip_server_warmup: true
+      disable_piecewise_cuda_graph: true
+      attention_backend: flashinfer
+      json_model_override_args: '{}'
+      disable_cuda_graph: true
+      dllm_algorithm: FastDiffuser
+      dllm_algorithm_config: /home/snorouzi/diffusion_RL/RL/tools/nemotron_diffusion/block_just_grpo_leftmost_dllm_bs16.yaml
+    sglang_val_dllm_overrides:
+      selection_policy: confidence
+      threshold: 0.9
+      max_steps: 16
+      temperature: 1.0
+    vllm_val_dllm_overrides: null
+    vllm_val_dllm_variants: null
+    worker_extension_cls_fqn: nemo_rl.models.generation.vllm.vllm_worker_async.VllmAsyncGenerationWorker
+  logprob_estimation:
+    type: just_grpo_block_reveal
+    mask_token_id: 100
+    exclude_mask_token_from_logits: false
+    fast_entropy_level_ratio: null
+  worker_extension_cls_fqn: ar_grpo.policy.ARModeForMultiModeMegatronPolicy
+env:
+  math:
+    num_workers: 8
+    math_verify_impl: hf_math_verify
+  should_use_nemo_gym: true
+  should_log_nemo_gym_responses: true
+  nemo_gym:
+    uv_venv_dir: /lustre/fsw/portfolios/coreai/users/snorouzi/gym_venvs
+    uv_cache_dir: /lustre/fsw/portfolios/coreai/users/snorouzi/gym_cache/uv
+    skip_venv_if_present: true
+    config_paths:
+    - responses_api_models/vllm_model/configs/vllm_model_for_training.yaml
+    - resources_servers/math_with_judge/configs/math_with_judge.yaml
+    - resources_servers/code_gen/configs/code_gen.yaml
+    - resources_servers/ns_tools/configs/ns_tools.yaml
+    math_with_judge:
+      resources_servers:
+        math_with_judge:
+          should_use_judge: false
+          verifier_workers: 8
+          verifier_timeout_s: 30
+    code_gen:
+      resources_servers:
+        code_gen:
+          num_processes: 2048
+          unit_test_timeout_secs: 10
+    policy_model:
+      responses_api_models:
+        vllm_model:
+          num_workers: 8
+          return_entropy: false
+          uses_reasoning_parser: true
+          chat_template_kwargs:
+            enable_thinking: true
+            reasoning_budget: 28672
+          extra_body:
+            thinking_token_budget: 28672
+    port_range_low: 2000
+    port_range_high: 5999
+    global_aiohttp_client_timeout_s: 1800
+    rollout_diagnostics_dir: ${logger.log_dir}/diagnostics
+    ns_tools:
+      resources_servers:
+        ns_tools:
+          cleanup_sessions: true
+    ns_tools_simple_agent:
+      responses_api_agents:
+        simple_agent:
+          cleanup_session: true
+          max_steps: 5
+    code_gen_simple_agent:
+      responses_api_agents:
+        simple_agent:
+          max_steps: 5
+    math_with_judge_simple_agent:
+      responses_api_agents:
+        simple_agent:
+          max_steps: 1
+logger:
+  log_dir: ${oc.env:LOG_DIR,logs/ar-superv3-opd-helpful-32k-in-order}
+  num_val_samples_to_print: 0
+  wandb_enabled: true
+  tensorboard_enabled: false
+  mlflow_enabled: false
+  swanlab_enabled: false
+  monitor_gpus: false
+  wandb:
+    project: diffusion_rl
+    name: ${oc.env:WANDB_RUN_NAME,ar_superv3_opd_helpful_32k_in_order}
+    mode: online
+  swanlab:
+    project: grpo-dev
+    name: sj_megatron_1B
+  tensorboard: {}
+  mlflow:
+    experiment_name: grpo-dev
+    run_name: sj_megatron_1B
+    tracking_uri: http://localhost:5000
+  gpu_monitoring:
+    collection_interval: 10
+    flush_interval: 10
+cluster:
+  gpus_per_node: 8
+  num_nodes: 24
+runtime_versions:
+  nemo_rl:
+    path: unknown
+    branch: unknown
+    commit: unknown
+    status_count: unknown
+  sglang:
+    url: unknown
+    commit: unknown
+    subdirectory: unknown
+  megatron_bridge:
+    path: unknown
+    branch: unknown
+    commit: unknown
+    status_count: unknown
+  megatron_lm:
+    path: unknown
+    branch: unknown
+    commit: unknown
+    status_count: unknown
+  env:
+    tag: unknown
+    uv_project_environment: unknown
+    uv_cache_dir: unknown
+    worker_venv_dir: unknown
+data:
+  shuffle: true
+  num_workers: 1
+  use_multiple_dataloader: false
+  max_input_seq_length: null
+  train:
+    dataset_name: NemoGymDataset
+    data_path: /lustre/fsw/portfolios/coreai/users/snorouzi/diffusion_rl/dataset/v30_math_code_tools/train.jsonl
+  validation:
+    dataset_name: NemoGymDataset
+    repeat: 1
+    data_path: /lustre/fsw/portfolios/coreai/users/snorouzi/diffusion_rl/dataset/v30_math_code_tools/val.jsonl
+  default:
+    prompt_file: null
+    system_prompt_file: null
+    processor: nemo_gym_data_processor
+    env_name: nemo_gym
+    dataset_name: NemoGymDataset
+defaults: grpo_math_1B_megatron_single_controller.yaml
+async_rl:
+  sampler:
+    name: in_order
+    max_lookahead_versions: 1
+  min_groups_for_streaming_train: 8
+  max_inflight_prompts: 240
+  max_buffered_rollouts: 240
+  rollout_failure:
+    native: {}
+    nemo_gym:
+      rollout_timeout_s: 2400
+  stall_watchdog:
+    stall_timeout_s: 2700
+    stall_action: abort
+data_plane:
+  enabled: true
+  backend: simple
