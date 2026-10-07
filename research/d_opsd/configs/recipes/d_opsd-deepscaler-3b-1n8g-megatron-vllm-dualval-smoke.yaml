@@ -1,0 +1,19 @@
+# Two full-context updates plus both validation modes on one node.
+# Disable correctness filtering so the smoke always exercises backward.
+defaults: ./d_opsd-deepscaler-3b-4n8g-megatron-vllm-dualval-long.yaml
+d_opsd:
+  correct_only: false
+grpo:
+  num_prompts_per_step: 8
+  num_generations_per_prompt: 2  # Toy check; production keeps pass@8.
+  max_num_steps: 2
+  val_period: 1
+  max_val_samples: 8
+  val_batch_size: 8
+checkpointing:
+  enabled: false
+logger:
+  wandb_enabled: false
+  tensorboard_enabled: false
+cluster:
+  num_nodes: 1

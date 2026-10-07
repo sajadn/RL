@@ -66,6 +66,7 @@ conflicts = [[
 members = [
     "ar-grpo",
     "block-diffusion",
+    "d-opsd",
     "just-grpo",
     "nemo-rl",
     "template-project",
@@ -1218,6 +1219,29 @@ sdist = { url = "https://files.pythonhosted.org/packages/cb/74/c769ee662b9b50d16
 wheels = [
     { url = "https://files.pythonhosted.org/packages/86/db/b0c32e2d84f687bb1a5dafd15d829a454092553268380a1dc4188d34f0f1/databricks_sdk-0.136.0-py3-none-any.whl", hash = "sha256:4e014a61f7fbccf5dbf726a4bf575665039e2cbe7dd4bc52a9d247d6c3042a02", size = 1039204, upload-time = "2026-09-07T04:34:30.182Z" },
 ]
+
+[[package]]
+name = "d-opsd"
+version = "0.1.0"
+source = { editable = "research/d_opsd" }
+dependencies = [
+    { name = "block-diffusion" },
+    { name = "nemo-rl" },
+]
+
+[package.dev-dependencies]
+test = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "block-diffusion", editable = "research/block_diffusion" },
+    { name = "nemo-rl", editable = "." },
+]
+
+[package.metadata.requires-dev]
+test = [{ name = "pytest", specifier = ">=7.0.0" }]
 
 [[package]]
 name = "datasets"

@@ -1,0 +1,114 @@
+# Synchronous d-OPSD: DeepScaleR train, AIME2024 AR + diffusion validation.
+# Four colocated nodes, eight GPUs/node; one fresh rollout batch per update.
+# Use research/d_opsd/tools/run.sbatch with EXPANDABLE_SEGMENTS=false.
+defaults:
+  - ./d_opsd-sudoku6x6-4n8g-megatron-vllm.yaml
+  - ../../../block_diffusion/configs/validation/ar_diffusion.yaml
+
+d_opsd:
+  generation_python: ${oc.env:NRL_VLLM_PY_EXECUTABLE,null}
+  reward_threshold: 1.0
+  schedule:
+    block_size: 16
+  sampling:
+    max_steps: 16
+    selection_policy: leftmost
+
+grpo:
+  num_prompts_per_step: 128
+  num_generations_per_prompt: 8
+  max_num_steps: 2147483647
+  max_num_epochs: 2147483647
+  normalize_rewards: false
+  adv_estimator:
+    normalize_rewards: false
+  async_grpo:
+    enabled: false
+  val_at_start: true
+  val_at_end: true
+  val_period: 10
+  max_val_samples: 480
+  val_batch_size: 32
+
+policy:
+  model_name: ${oc.env:MODEL,nvidia/Nemotron-Labs-Diffusion-3B}
+  tokenizer:
+    name: ${policy.model_name}
+  train_micro_batch_size: 1
+  logprob_batch_size: 1
+  max_total_sequence_length: 4096
+  refit_buffer_size_gb: 1.0
+  optimizer:
+    kwargs:
+      lr: 1.0e-6
+  megatron_cfg:
+    activation_checkpointing: false
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    optimizer:
+      min_lr: 1.0e-7
+    scheduler:
+      lr_decay_iters: ${grpo.max_num_steps}
+  generation:
+    max_new_tokens: 3744
+    colocated:
+      enabled: true
+    vllm_cfg:
+      max_model_len: 4160
+      enforce_eager: true
+      gpu_memory_utilization: 0.55
+      enable_vllm_metrics_logger: false
+    vllm_kwargs:
+      attention_backend: TRITON_ATTN
+      max_num_seqs: 32
+      kernel_config:
+        enable_flashinfer_autotune: false
+      hf_overrides:
+        architectures: [NemotronLabsDiffusionModel]
+        block_size: ${d_opsd.schedule.block_size}
+
+data:
+  _override_: true
+  shuffle: true
+  num_workers: 1
+  use_multiple_dataloader: false
+  max_input_seq_length: 350
+  train:
+    dataset_name: DeepScaler
+  validation:
+    dataset_name: AIME2024
+    repeat: 16
+  default:
+    prompt_file: examples/prompts/cot.txt
+    system_prompt_file: null
+    processor: math_hf_data_processor
+    env_name: math
+
+env:
+  _override_: true
+  math:
+    num_workers: 8
+    math_verify_impl: hf_math_verify
+
+checkpointing:
+  enabled: true
+  checkpoint_dir: ${oc.env:CHECKPOINT_ROOT,${logger.log_dir}/checkpoints}
+  keep_top_k: 2
+  ft_keep_latest_k: 2
+  save_period: 5
+  checkpoint_must_save_by: "00:03:30:00"
+  save_optimizer: true
+  load_replay_buffer: false
+
+logger:
+  log_dir: ${oc.env:OUTPUT_DIR,logs/d_opsd_deepscaler_3b_4n_dualval}
+  wandb_enabled: true
+  tensorboard_enabled: true
+  wandb:
+    project: diffusion_rl
+    name: ${oc.env:WANDB_RUN_NAME,d_opsd_deepscaler_3b_lr1e6_4n_dualval}
+
+cluster:
+  num_nodes: 4
+  gpus_per_node: 8

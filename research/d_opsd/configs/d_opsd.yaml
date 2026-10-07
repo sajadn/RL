@@ -1,0 +1,53 @@
+# Frozen self-teacher, full trajectory supervision, and batched pass@8 filtering.
+defaults: ../../block_diffusion/configs/sudoku6x6_megatron.yaml
+grpo:
+  seq_logprob_error_threshold: null
+  skip_reference_policy_logprobs_calculation: true
+  normalize_rewards: false
+loss_fn:
+  force_on_policy_ratio: true
+  reference_policy_kl_penalty: 0.0
+  use_importance_sampling_correction: false
+  truncated_importance_sampling_type: null
+  truncated_importance_sampling_ratio: null
+policy:
+  worker_extension_cls_fqn: d_opsd.policy_worker.DOPSDPolicyWorker
+  generation:
+    temperature: 1.0
+    val_temperature: 1.0
+d_opsd:
+  distributed: true
+  runtime: megatron
+  generation_python: null
+  max_generation_kl: 0.05
+  schedule:
+    mask_token_id: 100
+    block_size: 32
+    seed_base: 42
+  teacher_retain_ratio: 0.25  # Reveal this fraction of remaining response tokens.
+  reward_threshold: 0.25  # Paper's Sudoku threshold; use 1.0 for binary math rewards.
+  correct_only: true  # First accepted candidate per prompt; false trains on all candidates.
+  selection_source: teacher  # teacher confidence or recorded student commits.
+  pointwise_clip: 0.05  # Upper cap per vocabulary contribution; null disables clipping.
+  sampling:
+    temperature: ${policy.generation.temperature}
+    block_size: ${d_opsd.schedule.block_size}
+    max_steps: 16
+    selection_policy: leftmost
+    threshold: 0.9
+    returns_reveal_steps: true
+    returns_entropy: false
+    emit_full_blocks: true
+  validation_sampling:
+    temperature: ${policy.generation.val_temperature}
+    block_size: ${d_opsd.sampling.block_size}
+    max_steps: ${d_opsd.sampling.max_steps}
+    selection_policy: ${d_opsd.sampling.selection_policy}
+    threshold: ${d_opsd.sampling.threshold}
+    returns_reveal_steps: true
+    returns_entropy: false
+    emit_full_blocks: true
+logger:
+  log_dir: results/d_opsd_sudoku6x6
+  wandb:
+    name: ${oc.env:WANDB_RUN_NAME,d_opsd_sudoku6x6}

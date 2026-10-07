@@ -352,6 +352,7 @@ members = [
   "research/template_project",
   "research/ar_grpo",
   "research/block_diffusion",
+  "research/d_opsd",
   "research/just_grpo",
   "research/trace_grpo",
 ]

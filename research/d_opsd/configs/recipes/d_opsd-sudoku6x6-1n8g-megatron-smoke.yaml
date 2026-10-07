@@ -1,0 +1,25 @@
+defaults: ../d_opsd.yaml
+cluster:
+  num_nodes: 1
+  gpus_per_node: 8
+grpo:
+  num_prompts_per_step: 8
+  num_generations_per_prompt: 8
+  max_num_steps: 2
+  max_val_samples: 8
+  val_batch_size: 8
+  val_at_start: false
+  val_at_end: false
+  val_period: -1
+policy:
+  train_micro_batch_size: 1
+  logprob_batch_size: 1
+  max_total_sequence_length: 1024
+  generation:
+    max_new_tokens: 256
+logger:
+  log_dir: results/d_opsd_smoke
+  wandb_enabled: false
+
+d_opsd:
+  correct_only: false  # Exercise backward even if the tiny run finds no accepted answers.
