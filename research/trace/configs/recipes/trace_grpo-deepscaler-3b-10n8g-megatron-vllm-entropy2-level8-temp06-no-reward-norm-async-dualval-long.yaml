@@ -1,0 +1,14 @@
+# DeepScaleR TraceGRPO without group reward/advantage normalization.
+# Keep group baseline subtraction, entropy-two-token rollouts, all eight levels,
+# async generation, and AR + diffusion_conf09 validation.
+# Use 8 training + 2 generation nodes. An empty checkpoint root starts fresh;
+# an existing checkpoint root resumes its saved model and optimizer state.
+defaults: ./trace_grpo-deepscaler-3b-10n8g-megatron-vllm-entropy2-level8-temp06-async-dualval-long.yaml
+
+grpo:
+  normalize_rewards: false
+
+logger:
+  log_dir: ${oc.env:LOG_DIR,logs/trace_grpo_deepscaler_3b_entropy2_level8_temp06_no_reward_norm_8t2g_dualval}
+  wandb:
+    name: ${oc.env:WANDB_RUN_NAME,trace_grpo_deepscaler_3b_lr1e6_entropy2_level8_temp06_no_reward_norm_8t2g_dualval}
