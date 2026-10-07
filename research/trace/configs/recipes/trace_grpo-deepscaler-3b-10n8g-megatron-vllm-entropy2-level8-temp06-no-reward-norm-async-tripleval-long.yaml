@@ -1,0 +1,33 @@
+# Add fixed two-token entropy decoding to every validation round.
+# Inherit the no-reward-normalization recipe, including AR + confidence-0.9
+# validation every 10 steps. All three validation modes use temperature 1.0.
+# Entropy selects the two lowest-entropy masked positions per denoising step:
+# 16-token blocks / 8 steps. EOS can finish a response before all steps run.
+defaults: ./trace_grpo-deepscaler-3b-10n8g-megatron-vllm-entropy2-level8-temp06-no-reward-norm-async-dualval-long.yaml
+
+policy:
+  generation:
+    vllm_val_dllm_variants:
+      diffusion_entropy2:
+        temperature: 1.0
+        vllm_cfg:
+          gpu_memory_utilization: 0.55
+        vllm_kwargs:
+          hf_overrides:
+            architectures: [NemotronLabsDiffusionModel]
+            block_size: 16
+          diffusion_config:
+            canvas_length: 16
+            max_denoising_steps: 8
+            selection_policy: entropy
+            # Required by the validation schema; entropy selection ignores it.
+            confidence_threshold: 0.9
+            temperature: 1.0
+            emit_full_blocks: false
+            return_reveal_steps: false
+            return_entropy: false
+
+logger:
+  log_dir: ${oc.env:LOG_DIR,logs/trace_grpo_deepscaler_3b_entropy2_level8_temp06_no_reward_norm_8t2g_tripleval}
+  wandb:
+    name: ${oc.env:WANDB_RUN_NAME,trace_grpo_deepscaler_3b_lr1e6_entropy2_level8_temp06_no_reward_norm_8t2g_tripleval}

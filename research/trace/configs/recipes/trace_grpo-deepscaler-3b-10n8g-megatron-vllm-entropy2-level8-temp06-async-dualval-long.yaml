@@ -1,0 +1,40 @@
+# DeepScaleR TraceGRPO: 8 training + 2 generation nodes, 8 GPUs/node.
+# Entropy sampling reveals two tokens per step in 16-token blocks at T=0.6.
+# Train on all blocks and all eight trace levels, with sum reduction.
+# LR 1e-6; async rollouts; AR + diffusion_conf09 validation every 10 steps.
+# Activation checkpointing is disabled. Requires the asymmetric-attention Bridge
+# with the FP32 RoPE fix and a diffusion-capable vLLM runtime.
+# Run research/trace_grpo/run_trace_grpo.py; set EXPANDABLE_SEGMENTS=false.
+# MODEL and NRL_VLLM_PY_EXECUTABLE can select local model/runtime paths.
+# For continuation legs, reuse CHECKPOINT_ROOT and the same training topology.
+defaults: ./trace_grpo-deepscaler-3b-4n8g-megatron-vllm-entropy-temp06-async-dualval-long.yaml
+
+trace_grpo:
+  generation_python: ${oc.env:NRL_VLLM_PY_EXECUTABLE,null}
+  schedule:
+    num_level_samples: 8
+    sampled_level_reduction: sum
+
+policy:
+  model_name: ${oc.env:MODEL,nvidia/Nemotron-Labs-Diffusion-3B}
+  tokenizer:
+    name: ${policy.model_name}
+
+checkpointing:
+  enabled: true
+  checkpoint_dir: ${oc.env:CHECKPOINT_ROOT,${logger.log_dir}/checkpoints}
+  # Retain the best two plus the latest two (up to four distinct checkpoints).
+  keep_top_k: 2
+  ft_keep_latest_k: 2
+  save_period: 5
+  checkpoint_must_save_by: "00:03:30:00"
+  save_optimizer: true
+  load_replay_buffer: true
+
+logger:
+  log_dir: ${oc.env:LOG_DIR,logs/trace_grpo_deepscaler_3b_entropy2_level8_temp06_8t2g_dualval}
+  wandb:
+    name: ${oc.env:WANDB_RUN_NAME,trace_grpo_deepscaler_3b_lr1e6_entropy2_level8_temp06_8t2g_dualval}
+
+cluster:
+  num_nodes: 10
