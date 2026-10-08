@@ -17,6 +17,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from block_diffusion.config import DiffusionExperimentConfig
 from block_diffusion.generation.validation import validation_variants
+from block_diffusion.positive_diffusion import resolve_positive_diffusion_config
 
 
 def validate_experiment(
@@ -34,6 +35,12 @@ def validate_experiment(
     if variants and diffusion.runtime != "reference_vllm":
         raise ValueError("Multi-mode validation requires reference_vllm generation")
     g, p, loss = config.grpo, config.policy, config.loss_fn
+    if p.get("diffusion_aux_loss") is not None:
+        resolve_positive_diffusion_config(
+            OmegaConf.to_container(p.diffusion_aux_loss, resolve=True),
+            mask_token_id=diffusion.schedule.mask_token_id,
+            block_size=diffusion.schedule.block_size,
+        )
     if require_policy_scores and loss.force_on_policy_ratio:
         raise ValueError(
             "Diffusion GRPO requires recomputed prev_logprobs; force_on_policy_ratio must be false"

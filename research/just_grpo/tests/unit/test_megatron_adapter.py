@@ -285,6 +285,7 @@ def test_worker_accumulates_levels_before_one_optimizer_step(monkeypatch, fracti
     monkeypatch.setattr(parallel_state, "get_data_parallel_group", lambda: None)
     monkeypatch.setattr(torch.distributed, "all_reduce", lambda *a, **k: None)
     worker = Mock()
+    worker.positive_diffusion = None
     worker._build_schedule.return_value = schedule
     worker.max_generation_kl = 0.05
     expected_tokens = float(
@@ -338,6 +339,7 @@ def test_training_failure_aborts_open_step(monkeypatch, failure):
     data["training_token_mask"] = data["token_mask"].bool()
     monkeypatch.setattr(parallel_state, "get_data_parallel_group", lambda: None)
     worker = Mock()
+    worker.positive_diffusion = None
     worker._build_schedule.return_value = make_schedule(data)
     getattr(worker, failure).side_effect = RuntimeError("training failed")
     with pytest.raises(RuntimeError, match="training failed"):
@@ -359,6 +361,7 @@ def test_shared_worker_checks_generation_kl_over_schedule_targets(monkeypatch, k
     monkeypatch.setattr(parallel_state, "get_data_parallel_group", lambda: None)
     monkeypatch.setattr(torch.distributed, "all_reduce", lambda *a, **k: None)
     worker = Mock()
+    worker.positive_diffusion = None
     worker._build_schedule.return_value = schedule
     worker.max_generation_kl = 0.05
     worker.finish_train_step.return_value = {
@@ -508,3 +511,85 @@ def test_metadata_traverses_a_single_wrapped_model_and_is_shared_between_layers(
     assert prepared.input_ids.shape[1] == metadata.noisy_length + metadata.clean_length
     worker.prepare_microbatch_fn.clear_asymmetric_metadata()
     assert all(layer._asymmetric_ar_metadata is None for layer in layers)
+
+
+def test_positive_diffusion_level_runs_once_after_the_schedule(monkeypatch):
+    _keep_worker_data_on_cpu(monkeypatch)
+    data = confidence_batch()
+    data["training_token_mask"] = data["token_mask"].bool()
+    schedule = make_diffusion_schedule(data, 1.0)
+    monkeypatch.setattr(parallel_state, "get_data_parallel_group", lambda: None)
+    monkeypatch.setattr(torch.distributed, "all_reduce", lambda *a, **k: None)
+    worker = Mock()
+    worker.max_generation_kl = 0.05
+    worker._build_schedule.return_value = schedule
+    calls = []
+    worker.train_microbatch.side_effect = lambda level: calls.append("level")
+    worker._train_positive_diffusion_level.side_effect = lambda d: calls.append("aux")
+    worker.finish_train_step.return_value = {
+        "all_mb_metrics": {
+            "gen_kl_error": [0.001],
+            "global_valid_toks": [1.0],
+            "global_valid_seqs": [float(data.size * (schedule.num_steps + 1))],
+        }
+    }
+    result = MegatronDiffusionPolicyWorkerImpl.train(worker, data=data, loss_fn=Mock())
+    assert calls == ["level"] * schedule.num_steps + ["aux"]
+    assert result["all_mb_metrics"]["global_valid_seqs"] == [float(data.size)]
+
+
+def test_positive_diffusion_level_uses_untempered_ce_and_response_denominator(
+    monkeypatch,
+):
+    from types import SimpleNamespace
+
+    from block_diffusion.positive_diffusion import (
+        PositiveDiffusionLoss,
+        resolve_positive_diffusion_config,
+    )
+
+    data = confidence_batch()
+    data["advantages"] = data["token_mask"].float()
+    monkeypatch.setattr(parallel_state, "get_data_parallel_group", lambda: None)
+    monkeypatch.setattr(torch.distributed, "all_reduce", lambda *a, **k: None)
+    worker = object.__new__(MegatronDiffusionPolicyWorkerImpl)
+    worker.positive_diffusion = resolve_positive_diffusion_config(
+        {"mask_probability_min": 1.0}, mask_token_id=31, block_size=4
+    )
+    worker.positive_diffusion_generator = torch.Generator().manual_seed(0)
+    worker.tokenizer = SimpleNamespace(pad_token_id=0)
+    worker.cfg = {
+        "max_total_sequence_length": 16,
+        "generation": {"stop_token_ids": None},
+    }
+    worker.sampling_params = tempered = object()
+    worker.loss_postprocessor_factory = factory = object()
+    state = {
+        "metric_normalizations": {},
+        "local_valid_toks": torch.tensor(5.0, dtype=torch.float64),
+    }
+    worker._assert_step_open = lambda: state
+    seen = {}
+
+    def train_microbatch(level):
+        seen["level"] = level
+        seen["sampling_params"] = worker.sampling_params
+        seen["processor"] = worker.loss_postprocessor_factory(
+            loss_fn=Mock(), cfg={}, num_microbatches=1
+        )
+
+    worker.train_microbatch = train_microbatch
+    worker._train_positive_diffusion_level(data)
+    level = seen["level"]
+    responses = float(data["token_mask"].sum())
+    torch.testing.assert_close(
+        level["diffusion_aux_scale"], torch.full((data.size,), 5.0 / responses)
+    )
+    assert seen["sampling_params"] is None
+    assert isinstance(seen["processor"].loss_fn, PositiveDiffusionLoss)
+    assert worker.sampling_params is tempered
+    assert worker.loss_postprocessor_factory is factory
+    assert state["metric_normalizations"] == PositiveDiffusionLoss.metric_normalizations
+    # Every included response token is a target; none dilute the policy count.
+    assert level["token_mask"].sum() == responses
+    assert not worker._streaming_loss_token_mask(level).any()

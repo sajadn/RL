@@ -1,0 +1,38 @@
+# DeepScaleR full-token JustGRPO: 16 training + 2 generation nodes, 8 GPUs/node.
+# LR 1e-6, async leftmost rollouts, AR + diffusion_conf09 validation every 10 steps.
+# Activation checkpointing is disabled. Requires the asymmetric-attention Bridge
+# with the FP32 RoPE fix and a diffusion-capable vLLM runtime.
+# Run research/just_grpo/run_just_grpo.py; set EXPANDABLE_SEGMENTS=false.
+# MODEL and NRL_VLLM_PY_EXECUTABLE can select local model/runtime paths.
+# For continuation legs, reuse CHECKPOINT_ROOT and the same training topology.
+defaults: ./just_grpo-deepscaler-3b-10n8g-megatron-vllm-fast-async-dualval-long.yaml
+
+just_grpo:
+  generation_python: ${oc.env:NRL_VLLM_PY_EXECUTABLE,null}
+  max_generation_kl: 0.05
+  # Full JustGRPO scores every response token; no Fast token subsampling.
+  training_token_fraction: 1.0
+
+policy:
+  model_name: ${oc.env:MODEL,nvidia/Nemotron-Labs-Diffusion-3B}
+  tokenizer:
+    name: ${policy.model_name}
+
+checkpointing:
+  enabled: true
+  checkpoint_dir: ${oc.env:CHECKPOINT_ROOT,${logger.log_dir}/checkpoints}
+  # Retain the best two plus the latest two (up to four distinct checkpoints).
+  keep_top_k: 2
+  ft_keep_latest_k: 2
+  save_period: 5
+  checkpoint_must_save_by: "00:03:30:00"
+  save_optimizer: true
+  load_replay_buffer: true
+
+logger:
+  log_dir: ${oc.env:LOG_DIR,logs/just_grpo_fulltokens_deepscaler_3b_16t2g_dualval}
+  wandb:
+    name: ${oc.env:WANDB_RUN_NAME,just_grpo_fulltokens_deepscaler_3b_lr1e6_16t2g_dualval}
+
+cluster:
+  num_nodes: 18

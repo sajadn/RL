@@ -2,33 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """Partially masked denoising loss on positive AR GRPO completions."""
 
-from typing import Any, Literal, Self
+from typing import Any
 
 import torch
-from pydantic import BaseModel, Field, model_validator
 
-from nemo_rl.algorithms.loss.interfaces import LossInputType, LossType, MetricNormalizer
+from block_diffusion.positive_diffusion import (
+    PositiveDiffusionConfig,
+    PositiveDiffusionLoss as PositiveDiffusionLoss,
+    positive_samples,
+)
 from nemo_rl.distributed.batched_data_dict import BatchedDataDict
-
-
-class PositiveDiffusionConfig(BaseModel, extra="forbid"):
-    """Settings for the optional positive-completion auxiliary objective."""
-
-    weight: float = Field(default=0.1, ge=0, allow_inf_nan=False)
-    positive_samples: Literal["advantage", "reward"] = "advantage"
-    mask_token_id: int = Field(ge=0)
-    block_size: int = Field(gt=0)
-    mask_probability_min: float = Field(default=0.05, gt=0, le=1)
-    mask_probability_max: float = Field(default=1.0, gt=0, le=1)
-    seed: int = Field(default=42, ge=0)
-
-    @model_validator(mode="after")
-    def validate_probabilities(self) -> Self:
-        if self.mask_probability_min > self.mask_probability_max:
-            raise ValueError(
-                "mask_probability_min must not exceed mask_probability_max"
-            )
-        return self
 
 
 def build_positive_diffusion_batch(
@@ -54,15 +37,7 @@ def build_positive_diffusion_batch(
     valid = valid.clone()
     # Match the AR target denominator, which excludes column zero.
     valid[:, 0] = False
-    key = "advantages" if config.positive_samples == "advantage" else "rewards"
-    if key not in data:
-        raise ValueError(f"Positive diffusion selection requires {key} in the batch")
-    scores = data[key]
-    if scores.ndim == 2:
-        scores = (scores * valid).sum(-1) / valid.sum(-1).clamp_min(1)
-    if scores.shape != (ids.shape[0],):
-        raise ValueError(f"Expected per-sample or per-token {key}")
-    positive = (scores > 0) & (data["sample_mask"] > 0)
+    positive = positive_samples(data, config, valid)
     width = (ids.shape[1] + pad_multiple - 1) // pad_multiple * pad_multiple
     noisy_targets = (
         torch.nn.functional.pad(ids, (0, width - ids.shape[1]), value=pad_token_id)
@@ -107,49 +82,3 @@ def build_positive_diffusion_batch(
         diffusion_positive_samples=positive,
     )
     return combined
-
-
-class PositiveDiffusionLoss:
-    """Inverse-probability weighted masked CE, normalized with the AR loss.
-
-    L_aux = weight * sum_positive sum_masked -log p(x_i | noisy) / p_mask / N_AR.
-    N_AR includes all valid AR response tokens, including negative completions.
-    This keeps the coefficient independent of masking probability and streaming
-    chunk boundaries; fewer positive completions reduce the auxiliary strength.
-    """
-
-    loss_type = LossType.TOKEN_LEVEL
-    input_type = LossInputType.LOGPROB
-    metric_normalizations = {
-        "diffusion_aux_loss": MetricNormalizer.TOKENS,
-        "diffusion_aux_masked_tokens": MetricNormalizer.NONE,
-        "diffusion_aux_positive_samples": MetricNormalizer.NONE,
-    }
-
-    def __init__(self, config: PositiveDiffusionConfig) -> None:
-        self.weight = config.weight
-
-    def __call__(
-        self,
-        data: BatchedDataDict[Any],
-        global_valid_seqs: torch.Tensor,
-        global_valid_toks: torch.Tensor,
-        *,
-        next_token_logprobs: torch.Tensor,
-        shift_labels: bool,
-    ) -> tuple[torch.Tensor, dict[str, Any]]:
-        if shift_labels:
-            raise ValueError("Diffusion CE requires same-position targets")
-        weights = data["token_mask"] * data["sample_mask"][:, None]
-        weighted_ce = (
-            -next_token_logprobs * weights / data["diffusion_mask_probability"][:, None]
-        )
-        loss = self.weight * weighted_ce.sum() / global_valid_toks.clamp_min(1)
-        return loss, {
-            "loss": loss.item(),
-            "diffusion_aux_loss": loss.item(),
-            "diffusion_aux_masked_tokens": weights.sum().item(),
-            "diffusion_aux_positive_samples": data["diffusion_positive_samples"]
-            .sum()
-            .item(),
-        }

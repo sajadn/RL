@@ -1,0 +1,12 @@
+# Trace (entropy2, triple validation) plus the positive-completion diffusion
+# auxiliary loss: one extra uniformly masked level after the sampled Trace
+# levels, normalized by all valid response tokens as in AR GRPO.
+defaults: ./trace_grpo-deepscaler-3b-10n8g-megatron-vllm-entropy2-level8-temp06-no-reward-norm-async-tripleval-long.yaml
+
+policy:
+  diffusion_aux_loss:
+    weight: 0.1
+    positive_samples: advantage
+    mask_probability_min: 0.05
+    mask_probability_max: 1.0
+    seed: 42

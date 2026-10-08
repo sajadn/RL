@@ -1,0 +1,13 @@
+# Full-token JustGRPO plus the positive-completion diffusion auxiliary loss.
+# After the reveal levels, one extra uniformly masked level scores positive
+# completions with inverse-probability weighted denoising CE (untempered),
+# normalized by all valid response tokens as in AR GRPO positive diffusion.
+defaults: ./just_grpo-deepscaler-3b-18n8g-megatron-vllm-fulltokens-async-dualval-long.yaml
+
+policy:
+  diffusion_aux_loss:
+    weight: 0.1
+    positive_samples: advantage
+    mask_probability_min: 0.05
+    mask_probability_max: 1.0
+    seed: 42

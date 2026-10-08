@@ -1,9 +1,19 @@
 # Add fixed two-token entropy decoding to every validation round.
+# Evaluate each of the 30 AIME2024 problems four times per mode.
 # Inherit the no-reward-normalization recipe, including AR + confidence-0.9
 # validation every 10 steps. All three validation modes use temperature 1.0.
 # Entropy selects the two lowest-entropy masked positions per denoising step:
 # 16-token blocks / 8 steps. EOS can finish a response before all steps run.
 defaults: ./trace_grpo-deepscaler-3b-10n8g-megatron-vllm-entropy2-level8-temp06-no-reward-norm-async-dualval-long.yaml
+
+grpo:
+  max_val_samples: 120
+  # The validator floors max_val_samples / val_batch_size; process all 120.
+  val_batch_size: 30
+
+data:
+  validation:
+    repeat: 4
 
 policy:
   generation:

@@ -13,6 +13,8 @@
 # limitations under the License.
 """Shared Megatron execution for caller-supplied diffusion schedules."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, Callable
 
 import torch
@@ -34,6 +36,11 @@ from block_diffusion.diffusion_processors import (
 from block_diffusion.generation.megatron_generation import (
     generate_responses,
     pack_responses,
+)
+from block_diffusion.positive_diffusion import (
+    PositiveDiffusionLoss,
+    build_positive_diffusion_level,
+    resolve_positive_diffusion_config,
 )
 from nemo_rl.algorithms.loss.interfaces import LossFunction
 from nemo_rl.data.interfaces import TokenizerType
@@ -99,10 +106,80 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
         self.generation_seed = generation_seed
         self.max_generation_kl = max_generation_kl
         self.generation_index = 0
+        settings = self.cfg.get("diffusion_aux_loss")
+        self.positive_diffusion = (
+            None
+            if settings is None
+            else resolve_positive_diffusion_config(
+                settings, mask_token_id=mask_token_id, block_size=block_size
+            )
+        )
+        if self.positive_diffusion is not None and self.positive_diffusion.weight == 0:
+            self.positive_diffusion = None
+        if self.positive_diffusion is not None:
+            # Identical draws on tensor-parallel peers; distinct across DP ranks.
+            self.positive_diffusion_generator = torch.Generator(
+                device="cpu"
+            ).manual_seed(
+                self.positive_diffusion.seed + parallel_state.get_data_parallel_rank()
+            )
 
     def _streaming_loss_token_mask(self, data: BatchedDataDict[Any]) -> torch.Tensor:
-        """Diffusion predicts every selected position, including column zero."""
+        """Diffusion predicts every selected position, including column zero.
+
+        The auxiliary level supplies its own denominator; its targets must not
+        dilute the policy loss.
+        """
+        if "diffusion_mask_probability" in data:
+            return torch.zeros_like(data["token_mask"])
         return data["token_mask"]
+
+    @contextmanager
+    def _use_positive_diffusion_loss(self) -> Iterator[None]:
+        """Score the auxiliary level with untempered denoising CE."""
+        saved = self.sampling_params, self.loss_postprocessor_factory
+        loss_fn = PositiveDiffusionLoss(self.positive_diffusion)
+        self.sampling_params = None
+        self.loss_postprocessor_factory = lambda **kwargs: DiffusionLossPostProcessor(
+            **{**kwargs, "loss_fn": loss_fn}
+        )
+        try:
+            yield
+        finally:
+            self.sampling_params, self.loss_postprocessor_factory = saved
+
+    def _train_positive_diffusion_level(self, data: BatchedDataDict[Any]) -> None:
+        """Accumulate one uniformly masked level on positive completions.
+
+        Runs after the schedule so the policy denominator is known. The
+        auxiliary sum is rescaled from that denominator to the count of all
+        valid response tokens, matching the AR GRPO auxiliary loss.
+        """
+        state = self._assert_step_open()
+        state["metric_normalizations"] = {
+            **state["metric_normalizations"],
+            **PositiveDiffusionLoss.metric_normalizations,
+        }
+        level, response_tokens = build_positive_diffusion_level(
+            data,
+            self.positive_diffusion,
+            pad_token_id=self.tokenizer.pad_token_id,
+            padded_width=self.cfg["max_total_sequence_length"],
+            stop_token_ids=self.cfg["generation"]["stop_token_ids"] or [],
+            generator=self.positive_diffusion_generator,
+        )
+        counts = torch.stack(
+            [state["local_valid_toks"], response_tokens.to(state["local_valid_toks"])]
+        )
+        torch.distributed.all_reduce(
+            counts, group=parallel_state.get_data_parallel_group()
+        )
+        level["diffusion_aux_scale"] = torch.full_like(
+            level["diffusion_mask_probability"],
+            float(counts[0] / counts[1].clamp_min(1)),
+        )
+        with self._use_positive_diffusion_loss():
+            self.train_microbatch(level)
 
     def _build_schedule(
         self, data: BatchedDataDict[Any], *, purpose: SchedulePurpose
@@ -199,6 +276,8 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
                     level["token_mask"] * level["sample_mask"][:, None]
                 ).sum()
                 self.train_microbatch(level)
+            if self.positive_diffusion is not None:
+                self._train_positive_diffusion_level(data)
             result = self.finish_train_step()
         except Exception:
             self.abort_train_step()
@@ -209,9 +288,9 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
         result["all_mb_metrics"]["num_valid_samples"] = [
             float((data["sample_mask"] > 0).sum())
         ]
+        views = schedule.num_steps + (self.positive_diffusion is not None)
         result["all_mb_metrics"]["global_valid_seqs"] = [
-            count / schedule.num_steps
-            for count in result["all_mb_metrics"]["global_valid_seqs"]
+            count / views for count in result["all_mb_metrics"]["global_valid_seqs"]
         ]
         kl = (
             sum(result["all_mb_metrics"]["gen_kl_error"])
