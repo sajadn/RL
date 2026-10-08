@@ -582,11 +582,10 @@ def test_positive_diffusion_level_uses_untempered_ce_and_response_denominator(
     worker._train_positive_diffusion_level(data)
     level = seen["level"]
     responses = float(data["token_mask"].sum())
-    torch.testing.assert_close(
-        level["diffusion_aux_scale"], torch.full((data.size,), 5.0 / responses)
-    )
     assert seen["sampling_params"] is None
     assert isinstance(seen["processor"].loss_fn, PositiveDiffusionLoss)
+    # The policy-count finish scaling is converted to the response count.
+    assert seen["processor"].loss_fn.weight == pytest.approx(0.1 * 5.0 / responses)
     assert worker.sampling_params is tempered
     assert worker.loss_postprocessor_factory is factory
     assert state["metric_normalizations"] == PositiveDiffusionLoss.metric_normalizations

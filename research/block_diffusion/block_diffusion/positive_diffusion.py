@@ -122,8 +122,6 @@ class PositiveDiffusionLoss:
     N counts all valid response tokens, including negative completions.
     This keeps the coefficient independent of masking probability and streaming
     chunk boundaries; fewer positive completions reduce the auxiliary strength.
-    An optional per-row diffusion_aux_scale converts the policy loss's own
-    denominator to N when the two differ.
     """
 
     loss_type = LossType.TOKEN_LEVEL
@@ -152,8 +150,6 @@ class PositiveDiffusionLoss:
         weighted_ce = (
             -next_token_logprobs * weights / data["diffusion_mask_probability"][:, None]
         )
-        if "diffusion_aux_scale" in data:
-            weighted_ce = weighted_ce * data["diffusion_aux_scale"][:, None]
         loss = self.weight * weighted_ce.sum() / global_valid_toks.clamp_min(1)
         return loss, {
             "loss": loss.item(),

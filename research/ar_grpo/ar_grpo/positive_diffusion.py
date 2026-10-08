@@ -8,7 +8,6 @@ import torch
 
 from block_diffusion.positive_diffusion import (
     PositiveDiffusionConfig,
-    PositiveDiffusionLoss as PositiveDiffusionLoss,
     positive_samples,
 )
 from nemo_rl.distributed.batched_data_dict import BatchedDataDict

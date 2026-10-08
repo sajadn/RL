@@ -11,7 +11,7 @@ import torch
 from megatron.core import parallel_state
 
 from ar_grpo.policy import ARModeForMultiModeMegatronPolicyImpl
-from ar_grpo.positive_diffusion import (
+from block_diffusion.positive_diffusion import (
     PositiveDiffusionConfig,
     PositiveDiffusionLoss,
 )

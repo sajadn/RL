@@ -13,8 +13,6 @@
 # limitations under the License.
 """Shared Megatron execution for caller-supplied diffusion schedules."""
 
-from collections.abc import Iterator
-from contextlib import contextmanager
 from typing import Any, Callable
 
 import torch
@@ -107,15 +105,10 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
         self.max_generation_kl = max_generation_kl
         self.generation_index = 0
         settings = self.cfg.get("diffusion_aux_loss")
-        self.positive_diffusion = (
-            None
-            if settings is None
-            else resolve_positive_diffusion_config(
-                settings, mask_token_id=mask_token_id, block_size=block_size
-            )
+        aux = settings and resolve_positive_diffusion_config(
+            settings, mask_token_id=mask_token_id, block_size=block_size
         )
-        if self.positive_diffusion is not None and self.positive_diffusion.weight == 0:
-            self.positive_diffusion = None
+        self.positive_diffusion = aux if aux and aux.weight > 0 else None
         if self.positive_diffusion is not None:
             # Identical draws on tensor-parallel peers; distinct across DP ranks.
             self.positive_diffusion_generator = torch.Generator(
@@ -133,20 +126,6 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
         if "diffusion_mask_probability" in data:
             return torch.zeros_like(data["token_mask"])
         return data["token_mask"]
-
-    @contextmanager
-    def _use_positive_diffusion_loss(self) -> Iterator[None]:
-        """Score the auxiliary level with untempered denoising CE."""
-        saved = self.sampling_params, self.loss_postprocessor_factory
-        loss_fn = PositiveDiffusionLoss(self.positive_diffusion)
-        self.sampling_params = None
-        self.loss_postprocessor_factory = lambda **kwargs: DiffusionLossPostProcessor(
-            **{**kwargs, "loss_fn": loss_fn}
-        )
-        try:
-            yield
-        finally:
-            self.sampling_params, self.loss_postprocessor_factory = saved
 
     def _train_positive_diffusion_level(self, data: BatchedDataDict[Any]) -> None:
         """Accumulate one uniformly masked level on positive completions.
@@ -174,12 +153,23 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
         torch.distributed.all_reduce(
             counts, group=parallel_state.get_data_parallel_group()
         )
-        level["diffusion_aux_scale"] = torch.full_like(
-            level["diffusion_mask_probability"],
-            float(counts[0] / counts[1].clamp_min(1)),
+        # The finish step divides by the policy count; convert to the response count.
+        scale = float(counts[0] / counts[1].clamp_min(1))
+        loss_fn = PositiveDiffusionLoss(
+            self.positive_diffusion.model_copy(
+                update={"weight": self.positive_diffusion.weight * scale}
+            )
         )
-        with self._use_positive_diffusion_loss():
+        # Score this level with untempered denoising CE, then restore the policy loss.
+        saved = self.sampling_params, self.loss_postprocessor_factory
+        self.sampling_params = None
+        self.loss_postprocessor_factory = lambda **kwargs: DiffusionLossPostProcessor(
+            **{**kwargs, "loss_fn": loss_fn}
+        )
+        try:
             self.train_microbatch(level)
+        finally:
+            self.sampling_params, self.loss_postprocessor_factory = saved
 
     def _build_schedule(
         self, data: BatchedDataDict[Any], *, purpose: SchedulePurpose

@@ -9,10 +9,10 @@ import torch
 from omegaconf import OmegaConf
 from pydantic import BaseModel, ValidationError
 
-from ar_grpo.positive_diffusion import (
+from ar_grpo.positive_diffusion import build_positive_diffusion_batch
+from block_diffusion.positive_diffusion import (
     PositiveDiffusionConfig,
     PositiveDiffusionLoss,
-    build_positive_diffusion_batch,
 )
 from nemo_rl.distributed.batched_data_dict import BatchedDataDict
 from nemo_rl.models.policy import PolicyConfig

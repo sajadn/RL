@@ -94,29 +94,20 @@ def test_partial_masks_are_reproducible_and_respect_sampled_probabilities():
     assert first["input_lengths"].tolist() == [16, 16, 16]
 
 
-def test_inverse_probability_ce_rescales_to_the_response_denominator():
+def test_inverse_probability_weighted_ce():
     level, _ = build(config(mask_probability_min=0.5, mask_probability_max=0.5))
     level["token_mask"][0, :3] = True
     logprobs = -torch.ones(level["token_mask"].shape)
     loss = PositiveDiffusionLoss(config(weight=0.1))
-    base, metrics = loss(
+    value, metrics = loss(
         level,
         torch.tensor(1.0),
         torch.tensor(1.0),
         next_token_logprobs=logprobs,
         shift_labels=False,
     )
-    torch.testing.assert_close(base, torch.tensor(0.1 * 3 / 0.5))
+    torch.testing.assert_close(value, torch.tensor(0.1 * 3 / 0.5))
     assert metrics["diffusion_aux_masked_tokens"] == 3
-    level["diffusion_aux_scale"] = torch.full((3,), 0.25)
-    scaled, _ = loss(
-        level,
-        torch.tensor(1.0),
-        torch.tensor(1.0),
-        next_token_logprobs=logprobs,
-        shift_labels=False,
-    )
-    torch.testing.assert_close(scaled, base * 0.25)
 
 
 def test_reward_selection_requires_rewards():

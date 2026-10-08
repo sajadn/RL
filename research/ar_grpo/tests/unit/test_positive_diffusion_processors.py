@@ -12,7 +12,7 @@ from types import ModuleType
 
 import pytest
 import torch
-from ar_grpo.positive_diffusion import PositiveDiffusionLoss
+from block_diffusion.positive_diffusion import PositiveDiffusionLoss
 from test_positive_diffusion import build, config, trajectories
 from torch.nn import functional as F
 
