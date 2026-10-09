@@ -27,7 +27,12 @@ from megatron.core import parallel_state
 from nemo_rl.distributed.batched_data_dict import BatchedDataDict
 from nemo_rl.distributed.model_utils import get_next_token_logprobs_from_logits
 from nemo_rl.models.megatron.data import ProcessedMicrobatch
-from nemo_rl.models.megatron.train import LogprobsPostProcessor, LossPostProcessor
+from nemo_rl.algorithms.logits_sampling_utils import TrainingSamplingParams
+from nemo_rl.models.megatron.train import (
+    LogprobsPostProcessor,
+    LossPostProcessor,
+    apply_temperature_scaling,
+)
 
 
 def prepare_diffusion_microbatch(
@@ -156,6 +161,70 @@ class DiffusionLossPostProcessor(LossPostProcessor):
 
         def process(logits: torch.Tensor) -> tuple[torch.Tensor, dict]:
             return process_loss(selected_diffusion_logprobs(logits, data_dict))
+
+        return process
+
+
+class PolicyWithCausalAuxiliaryPostProcessor(LossPostProcessor):
+    """Policy loss on the noisy half plus causal CE on the clean half.
+
+    The clean half is a plain causal pass over prompt and response, so one
+    forward serves both losses; this processor's own loss is the causal CE.
+    The caller disables global temperature scaling; policy temperature is
+    applied here to the noisy half only.
+    """
+
+    def __init__(
+        self,
+        *,
+        policy_factory: Callable[..., LossPostProcessor],
+        auxiliary_loss_fn: Any,
+        policy_sampling_params: TrainingSamplingParams | None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**{**kwargs, "loss_fn": auxiliary_loss_fn})
+        self.policy = policy_factory(**kwargs)
+        self.policy_sampling_params = policy_sampling_params
+
+    def __call__(
+        self,
+        data_dict: BatchedDataDict[Any],
+        packed_seq_params: Any = None,
+        global_valid_seqs: torch.Tensor | None = None,
+        global_valid_toks: torch.Tensor | None = None,
+    ) -> Callable:
+        process_policy = self.policy(
+            data_dict=data_dict,
+            packed_seq_params=packed_seq_params,
+            global_valid_seqs=global_valid_seqs,
+            global_valid_toks=global_valid_toks,
+        )
+        auxiliary = BatchedDataDict(data_dict)
+        auxiliary["input_ids"] = data_dict["clean_input_ids"]
+        auxiliary["token_mask"] = data_dict["causal_aux_target_mask"]
+        process_auxiliary = super().__call__(
+            data_dict=auxiliary,
+            global_valid_seqs=global_valid_seqs,
+            global_valid_toks=global_valid_toks,
+        )
+        noisy_width = data_dict["target_ids"].shape[1]
+        clean_width = data_dict["clean_input_ids"].shape[1]
+
+        def process(logits: torch.Tensor) -> tuple[torch.Tensor, dict]:
+            noisy = logits[:, :noisy_width]
+            sampling = self.policy_sampling_params
+            if sampling is not None and sampling.temperature != 1:
+                # Scaling is in place: isolate the policy view from the causal CE.
+                noisy = apply_temperature_scaling(noisy.clone(), sampling)
+            policy_loss, policy_metrics = process_policy(noisy)
+            auxiliary_loss, auxiliary_metrics = process_auxiliary(
+                logits[:, noisy_width : noisy_width + clean_width]
+            )
+            return policy_loss + auxiliary_loss, {
+                **policy_metrics,
+                **auxiliary_metrics,
+                "loss": policy_metrics["loss"] + auxiliary_metrics["loss"],
+            }
 
         return process
 

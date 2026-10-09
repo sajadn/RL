@@ -36,6 +36,8 @@ class PositiveDiffusionARPolicyImpl(ARModeForMultiModeMegatronPolicyImpl):
         self.diffusion_config = PositiveDiffusionConfig.model_validate(
             config["diffusion_aux_loss"]
         )
+        if self.diffusion_config.type != "diffusion":
+            raise ValueError("AR GRPO supports only the diffusion auxiliary loss")
         mg = config["megatron_cfg"]
         if (
             not mg["enabled"]

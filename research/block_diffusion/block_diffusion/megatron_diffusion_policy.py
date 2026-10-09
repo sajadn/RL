@@ -13,6 +13,7 @@
 # limitations under the License.
 """Shared Megatron execution for caller-supplied diffusion schedules."""
 
+from functools import partial
 from typing import Any, Callable
 
 import torch
@@ -30,13 +31,16 @@ from block_diffusion.diffusion_processors import (
     DiffusionLogprobsPostProcessor,
     DiffusionLossPostProcessor,
     DiffusionMicrobatchProcessor,
+    PolicyWithCausalAuxiliaryPostProcessor,
 )
 from block_diffusion.generation.megatron_generation import (
     generate_responses,
     pack_responses,
 )
 from block_diffusion.positive_diffusion import (
+    PositiveARLoss,
     PositiveDiffusionLoss,
+    build_positive_ar_targets,
     build_positive_diffusion_level,
     resolve_positive_diffusion_config,
 )
@@ -134,11 +138,6 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
         auxiliary sum is rescaled from that denominator to the count of all
         valid response tokens, matching the AR GRPO auxiliary loss.
         """
-        state = self._assert_step_open()
-        state["metric_normalizations"] = {
-            **state["metric_normalizations"],
-            **PositiveDiffusionLoss.metric_normalizations,
-        }
         level, response_tokens = build_positive_diffusion_level(
             data,
             self.positive_diffusion,
@@ -147,19 +146,7 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
             stop_token_ids=self.cfg["generation"]["stop_token_ids"] or [],
             generator=self.positive_diffusion_generator,
         )
-        counts = torch.stack(
-            [state["local_valid_toks"], response_tokens.to(state["local_valid_toks"])]
-        )
-        torch.distributed.all_reduce(
-            counts, group=parallel_state.get_data_parallel_group()
-        )
-        # The finish step divides by the policy count; convert to the response count.
-        scale = float(counts[0] / counts[1].clamp_min(1))
-        loss_fn = PositiveDiffusionLoss(
-            self.positive_diffusion.model_copy(
-                update={"weight": self.positive_diffusion.weight * scale}
-            )
-        )
+        loss_fn = PositiveDiffusionLoss(self._auxiliary_config(response_tokens))
         # Score this level with untempered denoising CE, then restore the policy loss.
         saved = self.sampling_params, self.loss_postprocessor_factory
         self.sampling_params = None
@@ -170,6 +157,67 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
             self.train_microbatch(level)
         finally:
             self.sampling_params, self.loss_postprocessor_factory = saved
+
+    def _train_with_positive_ar(
+        self, level: BatchedDataDict[Any], data: BatchedDataDict[Any]
+    ) -> None:
+        """Train a schedule level with causal CE on its clean half.
+
+        The clean half is identical at every level, so one level carries the
+        auxiliary loss without an extra forward. It is the last level, after
+        which the policy denominator is known.
+        """
+        targets, response_tokens = build_positive_ar_targets(
+            data,
+            self.positive_diffusion,
+            stop_token_ids=self.cfg["generation"]["stop_token_ids"] or [],
+        )
+        width = level["clean_input_ids"].shape[1]
+        level["causal_aux_target_mask"] = torch.nn.functional.pad(
+            targets, (0, width - targets.shape[1])
+        )
+        level_tokens = (level["token_mask"] * level["sample_mask"][:, None]).sum()
+        loss_fn = PositiveARLoss(
+            self._auxiliary_config(response_tokens, pending_policy_tokens=level_tokens)
+        )
+        saved = self.sampling_params, self.loss_postprocessor_factory
+        self.sampling_params = None
+        self.loss_postprocessor_factory = partial(
+            PolicyWithCausalAuxiliaryPostProcessor,
+            policy_factory=saved[1],
+            auxiliary_loss_fn=loss_fn,
+            policy_sampling_params=saved[0],
+        )
+        try:
+            self.train_microbatch(level)
+        finally:
+            self.sampling_params, self.loss_postprocessor_factory = saved
+
+    def _auxiliary_config(
+        self, response_tokens: torch.Tensor, pending_policy_tokens: Any = 0
+    ) -> Any:
+        """Rescale the auxiliary weight from the policy to the response denominator.
+
+        The finish step divides every gradient by the global policy token count,
+        so the weight carries policy/response to normalize by response tokens.
+        """
+        state = self._assert_step_open()
+        loss_cls = {"ar": PositiveARLoss, "diffusion": PositiveDiffusionLoss}[
+            self.positive_diffusion.type
+        ]
+        state["metric_normalizations"] = {
+            **state["metric_normalizations"],
+            **loss_cls.metric_normalizations,
+        }
+        policy_tokens = state["local_valid_toks"] + pending_policy_tokens
+        counts = torch.stack([policy_tokens, response_tokens.to(policy_tokens)])
+        torch.distributed.all_reduce(
+            counts, group=parallel_state.get_data_parallel_group()
+        )
+        scale = float(counts[0] / counts[1].clamp_min(1))
+        return self.positive_diffusion.model_copy(
+            update={"weight": self.positive_diffusion.weight * scale}
+        )
 
     def _build_schedule(
         self, data: BatchedDataDict[Any], *, purpose: SchedulePurpose
@@ -261,12 +309,16 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
         local_tokens = torch.zeros((), device=data["input_ids"].device)
         self.begin_train_step(loss_fn, gbs=gbs, mbs=mbs)
         try:
-            for level in schedule.iter_levels(data):
+            aux = self.positive_diffusion and self.positive_diffusion.type
+            for index, level in enumerate(schedule.iter_levels(data)):
                 local_tokens += (
                     level["token_mask"] * level["sample_mask"][:, None]
                 ).sum()
-                self.train_microbatch(level)
-            if self.positive_diffusion is not None:
+                if aux == "ar" and index == schedule.num_steps - 1:
+                    self._train_with_positive_ar(level, data)
+                else:
+                    self.train_microbatch(level)
+            if aux == "diffusion":
                 self._train_positive_diffusion_level(data)
             result = self.finish_train_step()
         except Exception:
@@ -278,7 +330,7 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
         result["all_mb_metrics"]["num_valid_samples"] = [
             float((data["sample_mask"] > 0).sum())
         ]
-        views = schedule.num_steps + (self.positive_diffusion is not None)
+        views = schedule.num_steps + (aux == "diffusion")
         result["all_mb_metrics"]["global_valid_seqs"] = [
             count / views for count in result["all_mb_metrics"]["global_valid_seqs"]
         ]

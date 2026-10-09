@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Partially masked denoising loss on positive GRPO completions."""
+"""Auxiliary denoising or causal loss on positive GRPO completions."""
 
 from typing import Any, Literal, Self
 
@@ -26,6 +26,8 @@ from nemo_rl.distributed.batched_data_dict import BatchedDataDict
 class PositiveDiffusionConfig(BaseModel, extra="forbid"):
     """Settings for the optional positive-completion auxiliary objective."""
 
+    # diffusion: an extra uniformly masked level; ar: causal CE on the clean half.
+    type: Literal["diffusion", "ar"] = "diffusion"
     weight: float = Field(default=0.1, ge=0, allow_inf_nan=False)
     positive_samples: Literal["advantage", "reward"] = "advantage"
     mask_token_id: int = Field(ge=0)
@@ -58,6 +60,44 @@ def positive_samples(
     return (scores > 0) & (data["sample_mask"] > 0)
 
 
+def valid_response_mask(data: BatchedDataDict[Any]) -> torch.Tensor:
+    """Response tokens within each rollout's length."""
+    ids = data["input_ids"]
+    return data["token_mask"].bool() & (
+        torch.arange(ids.shape[1], device=ids.device)[None]
+        < data["input_lengths"][:, None]
+    )
+
+
+def scorable_response_mask(
+    data: BatchedDataDict[Any], stop_token_ids: list[int]
+) -> torch.Tensor:
+    """Included response tokens through the first stop token, in rollout coordinates."""
+    ids = data["input_ids"]
+    response = valid_response_mask(data) & data["sample_mask"].bool()[:, None]
+    stops = response & torch.isin(
+        ids, torch.tensor(stop_token_ids, dtype=ids.dtype, device=ids.device)
+    )
+    after_stop = (stops.long().cumsum(1) - stops.long()) > 0
+    return response & ~after_stop
+
+
+def build_positive_ar_targets(
+    data: BatchedDataDict[Any],
+    config: PositiveDiffusionConfig,
+    *,
+    stop_token_ids: list[int],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Mark causal CE targets on positive completions in rollout coordinates.
+
+    Returns the target mask and the local count of scorable response tokens over
+    all included completions, the denominator shared with the diffusion loss.
+    """
+    scorable = scorable_response_mask(data, stop_token_ids)
+    positive = positive_samples(data, config, valid_response_mask(data))
+    return scorable & positive[:, None], scorable.sum()
+
+
 def build_positive_diffusion_level(
     data: BatchedDataDict[Any],
     config: PositiveDiffusionConfig,
@@ -84,20 +124,14 @@ def build_positive_diffusion_level(
     )
     level = BatchedDataDict(layout.base)
     targets = level["target_ids"]
-    response = layout.response_mask
-    stops = torch.isin(
-        targets,
-        torch.tensor(stop_token_ids, dtype=targets.dtype, device=targets.device),
+    scorable = (
+        scorable_response_mask(data, stop_token_ids).gather(
+            1, level["original_positions"]
+        )
+        & layout.response_mask
     )
-    stops &= response
-    after_stop = (stops.long().cumsum(1) - stops.long()) > 0
-    scorable = response & ~after_stop
     ids = data["input_ids"]
-    valid = data["token_mask"].bool() & (
-        torch.arange(ids.shape[1], device=ids.device)[None]
-        < data["input_lengths"][:, None]
-    )
-    positive = positive_samples(data, config, valid)
+    positive = positive_samples(data, config, valid_response_mask(data))
     probabilities = config.mask_probability_min + (
         config.mask_probability_max - config.mask_probability_min
     ) * torch.rand(ids.shape[0], generator=generator)
@@ -173,3 +207,42 @@ def resolve_positive_diffusion_config(
             "diffusion_aux_loss must use the algorithm's MASK token and block size"
         )
     return config
+
+
+class PositiveARLoss:
+    """Causal next-token CE on positive completions, normalized like the policy loss.
+
+    L_aux = weight * sum_positive sum_targets -log p(x_t | x_<t) / N, with N as
+    in PositiveDiffusionLoss. token_mask marks target positions; the shifted
+    logprob at t - 1 predicts token t.
+    """
+
+    loss_type = LossType.TOKEN_LEVEL
+    input_type = LossInputType.LOGPROB
+    metric_normalizations = {
+        "ar_aux_loss": MetricNormalizer.TOKENS,
+        "ar_aux_tokens": MetricNormalizer.NONE,
+    }
+
+    def __init__(self, config: PositiveDiffusionConfig) -> None:
+        self.weight = config.weight
+
+    def __call__(
+        self,
+        data: BatchedDataDict[Any],
+        global_valid_seqs: torch.Tensor,
+        global_valid_toks: torch.Tensor,
+        *,
+        next_token_logprobs: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        weights = data["token_mask"][:, 1:] * data["sample_mask"][:, None]
+        loss = (
+            self.weight
+            * (-next_token_logprobs * weights).sum()
+            / global_valid_toks.clamp_min(1)
+        )
+        return loss, {
+            "loss": loss.item(),
+            "ar_aux_loss": loss.item(),
+            "ar_aux_tokens": weights.sum().item(),
+        }

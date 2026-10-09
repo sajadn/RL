@@ -17,7 +17,9 @@ import pytest
 import torch
 
 from block_diffusion.positive_diffusion import (
+    PositiveARLoss,
     PositiveDiffusionLoss,
+    build_positive_ar_targets,
     build_positive_diffusion_level,
     resolve_positive_diffusion_config,
 )
@@ -122,3 +124,24 @@ def test_auxiliary_config_must_match_the_algorithm_canvas():
             {"block_size": 16}, mask_token_id=MASK, block_size=4
         )
 
+
+def test_causal_targets_cover_positive_responses_through_the_stop_token():
+    targets, response_tokens = build_positive_ar_targets(
+        rollout_batch(), config(type="ar"), stop_token_ids=[STOP]
+    )
+    assert targets[0].nonzero().flatten().tolist() == [4, 5, 6]
+    assert not targets[1:].any()
+    # Same denominator as the diffusion level: every included completion.
+    assert int(response_tokens) == 3 + 7
+
+
+def test_causal_ce_scores_shifted_targets():
+    data = rollout_batch()
+    targets, _ = build_positive_ar_targets(data, config(type="ar"), stop_token_ids=[STOP])
+    data["token_mask"] = targets
+    logprobs = torch.full((3, targets.shape[1] - 1), -2.0)
+    loss, metrics = PositiveARLoss(config(type="ar", weight=0.1))(
+        data, torch.tensor(1.0), torch.tensor(1.0), next_token_logprobs=logprobs
+    )
+    torch.testing.assert_close(loss, torch.tensor(0.1 * 3 * 2.0))
+    assert metrics["ar_aux_tokens"] == 3

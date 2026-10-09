@@ -1,0 +1,11 @@
+# Full-token JustGRPO plus a causal (AR) auxiliary loss on positive completions.
+# The last reveal level also scores next-token CE on its clean, causal half, so
+# no extra forward runs. Normalized by all valid response tokens, as the
+# diffusion auxiliary loss and AR GRPO positive diffusion.
+defaults: ./just_grpo-deepscaler-3b-18n8g-megatron-vllm-fulltokens-async-dualval-long.yaml
+
+policy:
+  diffusion_aux_loss:
+    type: ar
+    weight: 0.1
+    positive_samples: advantage

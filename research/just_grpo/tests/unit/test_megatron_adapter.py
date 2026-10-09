@@ -514,6 +514,8 @@ def test_metadata_traverses_a_single_wrapped_model_and_is_shared_between_layers(
 
 
 def test_positive_diffusion_level_runs_once_after_the_schedule(monkeypatch):
+    from types import SimpleNamespace
+
     _keep_worker_data_on_cpu(monkeypatch)
     data = confidence_batch()
     data["training_token_mask"] = data["token_mask"].bool()
@@ -521,6 +523,7 @@ def test_positive_diffusion_level_runs_once_after_the_schedule(monkeypatch):
     monkeypatch.setattr(parallel_state, "get_data_parallel_group", lambda: None)
     monkeypatch.setattr(torch.distributed, "all_reduce", lambda *a, **k: None)
     worker = Mock()
+    worker.positive_diffusion = SimpleNamespace(type="diffusion")
     worker.max_generation_kl = 0.05
     worker._build_schedule.return_value = schedule
     calls = []
@@ -592,3 +595,156 @@ def test_positive_diffusion_level_uses_untempered_ce_and_response_denominator(
     # Every included response token is a target; none dilute the policy count.
     assert level["token_mask"].sum() == responses
     assert not worker._streaming_loss_token_mask(level).any()
+
+
+def test_causal_auxiliary_rides_on_the_last_level_without_an_extra_pass(monkeypatch):
+    from types import SimpleNamespace
+
+    _keep_worker_data_on_cpu(monkeypatch)
+    data = confidence_batch()
+    data["training_token_mask"] = data["token_mask"].bool()
+    schedule = make_diffusion_schedule(data, 1.0)
+    monkeypatch.setattr(parallel_state, "get_data_parallel_group", lambda: None)
+    monkeypatch.setattr(torch.distributed, "all_reduce", lambda *a, **k: None)
+    worker = Mock()
+    worker.positive_diffusion = SimpleNamespace(type="ar")
+    worker.max_generation_kl = 0.05
+    worker._build_schedule.return_value = schedule
+    calls = []
+    worker.train_microbatch.side_effect = lambda level: calls.append("level")
+    worker._train_with_positive_ar.side_effect = lambda level, d: calls.append("ar")
+    worker.finish_train_step.return_value = {
+        "all_mb_metrics": {
+            "gen_kl_error": [0.001],
+            "global_valid_toks": [1.0],
+            "global_valid_seqs": [float(data.size * schedule.num_steps)],
+        }
+    }
+    result = MegatronDiffusionPolicyWorkerImpl.train(worker, data=data, loss_fn=Mock())
+    assert calls == ["level"] * (schedule.num_steps - 1) + ["ar"]
+    worker._train_positive_diffusion_level.assert_not_called()
+    assert result["all_mb_metrics"]["global_valid_seqs"] == [float(data.size)]
+
+
+def test_causal_auxiliary_level_rescales_to_the_response_denominator(monkeypatch):
+    from types import SimpleNamespace
+
+    from block_diffusion.diffusion_processors import (
+        PolicyWithCausalAuxiliaryPostProcessor,
+    )
+    from block_diffusion.positive_diffusion import (
+        PositiveARLoss,
+        resolve_positive_diffusion_config,
+    )
+    from nemo_rl.models.megatron.train import LossPostProcessor
+
+    data = confidence_batch()
+    data["advantages"] = data["token_mask"].float()
+    data["training_token_mask"] = data["token_mask"].bool()
+    level = list(make_diffusion_schedule(data, 1.0).iter_levels(data))[-1]
+    monkeypatch.setattr(parallel_state, "get_data_parallel_group", lambda: None)
+    monkeypatch.setattr(torch.distributed, "all_reduce", lambda *a, **k: None)
+    worker = object.__new__(MegatronDiffusionPolicyWorkerImpl)
+    worker.positive_diffusion = resolve_positive_diffusion_config(
+        {"type": "ar"}, mask_token_id=31, block_size=4
+    )
+    worker.cfg = {"generation": {"stop_token_ids": None}}
+    worker.sampling_params = tempered = SimpleNamespace(temperature=0.5)
+    worker.loss_postprocessor_factory = factory = DiffusionLossPostProcessor
+    state = {
+        "metric_normalizations": {},
+        "local_valid_toks": torch.tensor(5.0, dtype=torch.float64),
+    }
+    worker._assert_step_open = lambda: state
+    seen = {}
+
+    def train_microbatch(trained):
+        seen["level"] = trained
+        seen["sampling_params"] = worker.sampling_params
+        seen["processor"] = worker.loss_postprocessor_factory(
+            loss_fn=Mock(), cfg={}, num_microbatches=1
+        )
+
+    worker.train_microbatch = train_microbatch
+    worker._train_with_positive_ar(level, data)
+    processor = seen["processor"]
+    assert isinstance(processor, PolicyWithCausalAuxiliaryPostProcessor)
+    # Megatron's forward dispatches loss post-processors by this base class.
+    assert isinstance(processor, LossPostProcessor)
+    assert isinstance(processor.policy, DiffusionLossPostProcessor)
+    assert processor.policy_sampling_params is tempered
+    assert seen["sampling_params"] is None
+    responses = float(data["token_mask"].sum())
+    policy_tokens = 5.0 + float(level["token_mask"].sum())
+    assert isinstance(processor.loss_fn, PositiveARLoss)
+    assert processor.loss_fn.weight == pytest.approx(
+        0.1 * policy_tokens / responses
+    )
+    targets = seen["level"]["causal_aux_target_mask"]
+    assert targets.shape == level["clean_input_ids"].shape
+    assert torch.equal(targets[:, : data["input_ids"].shape[1]], data["token_mask"].bool())
+    assert worker.sampling_params is tempered
+    assert worker.loss_postprocessor_factory is factory
+    assert state["metric_normalizations"] == PositiveARLoss.metric_normalizations
+
+
+@pytest.mark.parametrize("temperature", [1.0, 0.5])
+def test_causal_auxiliary_processor_matches_manual_losses(temperature):
+    from types import SimpleNamespace
+
+    from block_diffusion.diffusion_processors import (
+        PolicyWithCausalAuxiliaryPostProcessor,
+    )
+    from block_diffusion.positive_diffusion import (
+        PositiveARLoss,
+        resolve_positive_diffusion_config,
+    )
+
+    torch.manual_seed(0)
+    batch, noisy_width, clean_width, vocab = 2, 4, 6, 11
+    clean_ids = torch.randint(0, vocab, (batch, clean_width))
+    targets = torch.zeros(batch, clean_width, dtype=torch.bool)
+    targets[0, 3:5] = True
+    data = BatchedDataDict(
+        target_ids=torch.zeros(batch, noisy_width, dtype=torch.long),
+        clean_input_ids=clean_ids,
+        causal_aux_target_mask=targets,
+        token_mask=torch.ones(batch, noisy_width),
+        sample_mask=torch.ones(batch),
+    )
+    seen = {}
+
+    class Policy:
+        def __call__(self, data_dict, **kwargs):
+            def process(logits):
+                seen["policy_logits"] = logits
+                return logits.sum() * 0, {"loss": 0.0}
+
+            return process
+
+    sampling = SimpleNamespace(temperature=temperature, top_k=None, top_p=1.0)
+    processor = PolicyWithCausalAuxiliaryPostProcessor(
+        policy_factory=lambda **kwargs: Policy(),
+        auxiliary_loss_fn=PositiveARLoss(
+            resolve_positive_diffusion_config(
+                {"type": "ar", "weight": 0.3}, mask_token_id=31, block_size=2
+            )
+        ),
+        policy_sampling_params=sampling,
+        cfg={"sequence_packing": {"enabled": False}},
+        num_microbatches=1,
+    )
+    logits = torch.randn(batch, noisy_width + clean_width, vocab, requires_grad=True)
+    loss, metrics = processor(
+        data, global_valid_seqs=torch.tensor(1.0), global_valid_toks=torch.tensor(1.0)
+    )(logits)
+    clean = logits[:, noisy_width:].log_softmax(-1)
+    expected = -0.3 * (
+        clean[:, :-1].gather(-1, clean_ids[:, 1:, None]).squeeze(-1) * targets[:, 1:]
+    ).sum()
+    torch.testing.assert_close(loss, expected)
+    assert metrics["ar_aux_tokens"] == 2
+    # The policy view is tempered; the causal CE is not.
+    torch.testing.assert_close(
+        seen["policy_logits"], logits[:, :noisy_width].float() / temperature
+    )
