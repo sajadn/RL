@@ -1,6 +1,6 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Compute AR GRPO and positive diffusion CE from one asymmetric forward."""
+"""Compute AR GRPO and positive-completion CE in a shared forward."""
 
 import math
 from dataclasses import replace
@@ -14,7 +14,9 @@ from block_diffusion.diffusion_processors import (
 
 from ar_grpo.positive_diffusion import build_positive_diffusion_batch
 from block_diffusion.positive_diffusion import (
+    PositiveARLoss,
     PositiveDiffusionConfig,
+    build_positive_ar_targets,
     PositiveDiffusionLoss,
 )
 from nemo_rl.algorithms.logits_sampling_utils import TrainingSamplingParams
@@ -142,6 +144,82 @@ class PositiveDiffusionLossPostProcessor(LossPostProcessor):
                 **ar_metrics,
                 **diffusion_metrics,
                 "loss": ar_metrics["loss"] + diffusion_metrics["loss"],
+            }
+
+        return process
+
+
+class PositiveARLossPostProcessor(LossPostProcessor):
+    """Policy loss and untempered positive-completion CE on the same causal logits."""
+
+    def __init__(
+        self,
+        *,
+        cfg: PolicyConfig,
+        sampling_params: TrainingSamplingParams | None = None,
+        **kwargs: Any,
+    ) -> None:
+        generation = cfg["generation"]
+        if sampling_params is None:
+            sampling_params = TrainingSamplingParams(
+                top_k=generation["top_k"],
+                top_p=generation["top_p"],
+                temperature=generation["temperature"],
+            )
+        super().__init__(cfg=cfg, sampling_params=sampling_params, **kwargs)
+        self.auxiliary_config = PositiveDiffusionConfig.model_validate(
+            cfg["diffusion_aux_loss"]
+        )
+        self.auxiliary_processor = LossPostProcessor(
+            loss_fn=PositiveARLoss(self.auxiliary_config),
+            cfg=cfg,
+            num_microbatches=self.num_microbatches,
+            cp_normalize=self.cp_normalize,
+        )
+
+    def __call__(
+        self,
+        data_dict: BatchedDataDict[Any],
+        packed_seq_params: Any = None,
+        global_valid_seqs: torch.Tensor | None = None,
+        global_valid_toks: torch.Tensor | None = None,
+    ) -> Callable:
+        process_policy = super().__call__(
+            data_dict=data_dict,
+            packed_seq_params=packed_seq_params,
+            global_valid_seqs=global_valid_seqs,
+            global_valid_toks=global_valid_toks,
+        )
+        # Evaluation and weight-zero training use ordinary AR processing.
+        if "ar_aux_enabled" not in data_dict:
+            return process_policy
+        if packed_seq_params is not None:
+            raise ValueError("Positive AR processors require unpacked microbatches")
+        targets, _ = build_positive_ar_targets(
+            data_dict,
+            self.auxiliary_config,
+            stop_token_ids=self.cfg["generation"]["stop_token_ids"] or [],
+        )
+        auxiliary = BatchedDataDict(data_dict)
+        auxiliary["token_mask"] = targets
+        process_auxiliary = self.auxiliary_processor(
+            data_dict=auxiliary,
+            global_valid_seqs=global_valid_seqs,
+            global_valid_toks=global_valid_toks,
+        )
+
+        def process(logits: torch.Tensor) -> tuple[torch.Tensor, dict]:
+            policy_logits = logits
+            if self.sampling_params.temperature != 1:
+                policy_logits = apply_temperature_scaling(
+                    logits.clone(), self.sampling_params
+                )
+            policy_loss, policy_metrics = process_policy(policy_logits)
+            auxiliary_loss, auxiliary_metrics = process_auxiliary(logits)
+            return policy_loss + auxiliary_loss, {
+                **policy_metrics,
+                **auxiliary_metrics,
+                "loss": policy_metrics["loss"] + auxiliary_metrics["loss"],
             }
 
         return process

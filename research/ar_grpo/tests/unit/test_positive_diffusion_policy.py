@@ -203,8 +203,9 @@ def test_sequence_normalization_is_rejected_before_opening_a_step(auxiliary_poli
 
 
 @pytest.mark.parametrize("draft_enabled", [False, True])
+@pytest.mark.parametrize("aux_type", ["diffusion", "ar"])
 def test_constructor_accepts_disabled_draft_and_rejects_enabled_draft(
-    auxiliary_policy, monkeypatch, draft_enabled
+    auxiliary_policy, monkeypatch, draft_enabled, aux_type
 ):
     def native_init(self, cfg, *args, **kwargs):
         self.cfg = cfg
@@ -219,7 +220,7 @@ def test_constructor_accepts_disabled_draft_and_rejects_enabled_draft(
         auxiliary_policy.ARModeForMultiModeMegatronPolicyImpl, "__init__", native_init
     )
     cfg = {
-        "diffusion_aux_loss": {"mask_token_id": 100, "block_size": 16},
+        "diffusion_aux_loss": {"type": aux_type, "mask_token_id": 100, "block_size": 16},
         "megatron_cfg": {
             "enabled": True,
             "pipeline_model_parallel_size": 1,
@@ -237,14 +238,21 @@ def test_constructor_accepts_disabled_draft_and_rejects_enabled_draft(
     else:
         result = auxiliary_policy.PositiveDiffusionARPolicyImpl(cfg)
         assert result.diffusion_config.weight == 0.1
-        assert isinstance(
-            result.prepare_microbatch_fn,
-            auxiliary_policy.PositiveDiffusionMicrobatchProcessor,
-        )
-        assert (
-            result.loss_postprocessor_factory
-            is auxiliary_policy.PositiveDiffusionLossPostProcessor
-        )
+        if aux_type == "diffusion":
+            assert isinstance(
+                result.prepare_microbatch_fn,
+                auxiliary_policy.PositiveDiffusionMicrobatchProcessor,
+            )
+            assert (
+                result.loss_postprocessor_factory
+                is auxiliary_policy.PositiveDiffusionLossPostProcessor
+            )
+        else:
+            assert result.prepare_microbatch_fn is None
+            assert (
+                result.loss_postprocessor_factory
+                is auxiliary_policy.PositiveARLossPostProcessor
+            )
         assert cfg["megatron_cfg"]["model_overrides"]["block_size"] == 16
 
 
@@ -284,3 +292,41 @@ def test_asymmetric_metadata_uses_separate_noisy_and_clean_widths(auxiliary_poli
     assert seen[0]["noisy_length"] == 8
     assert seen[0]["clean_length"] == 7
     torch.testing.assert_close(seen[0]["clean_lengths"], batch["input_lengths"])
+
+
+@pytest.mark.parametrize("fail_backward", [False, True])
+@pytest.mark.parametrize("weight", [0.0, 0.1])
+def test_ar_auxiliary_uses_one_causal_pass_and_restores_sampling(
+    auxiliary_policy, monkeypatch, fail_backward, weight
+):
+    result, state = worker(auxiliary_policy, weight=weight)
+    result.diffusion_config = config(type="ar", weight=weight)
+    original_sampling = result.sampling_params
+    data = trajectories()
+    calls = []
+
+    def native_microbatch(self, batch):
+        calls.append(batch)
+        assert self.model[0]._inference_mode and self.model[0]._inference_causal
+        assert not self.model[0]._cache_enabled
+        assert ("ar_aux_enabled" in batch) == (weight > 0)
+        assert "diffusion_aux_enabled" not in batch
+        assert self.sampling_params is (None if weight > 0 else original_sampling)
+        assert batch["input_ids"] is data["input_ids"]
+        if fail_backward:
+            raise RuntimeError("backward failed")
+
+    monkeypatch.setattr(
+        auxiliary_policy.MegatronPolicyWorkerImpl, "train_microbatch", native_microbatch
+    )
+    if fail_backward:
+        with pytest.raises(RuntimeError, match="backward failed"):
+            result.train_microbatch(data)
+    else:
+        result.train_microbatch(data)
+    assert len(calls) == 1
+    assert "ar_aux_enabled" not in data
+    assert result.sampling_params is original_sampling
+    assert not result.model[0]._inference_mode
+    assert not result.model[0]._inference_causal
+    assert result.model[0]._cache_enabled

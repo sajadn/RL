@@ -1,0 +1,14 @@
+# GSM8K JustGRPO: causal AR CE on positive-advantage completions.
+# Keep the diffusion-auxiliary recipe's settings; replace its objective with AR CE.
+defaults: ./just_grpo-gsm8k-3b-18n8g-megatron-vllm-async-dualval-gen2048-diffaux.yaml
+
+policy:
+  diffusion_aux_loss:
+    type: ar
+
+checkpointing:
+  checkpoint_dir: ${oc.env:CHECKPOINT_DIR,results/just_grpo_gsm8k_3b_16t2g_gen2048_araux_seed${grpo.seed}}
+logger:
+  log_dir: ${oc.env:LOG_DIR,logs/just_grpo_gsm8k_3b_16t2g_gen2048_araux_seed${grpo.seed}}
+  wandb:
+    name: ${oc.env:WANDB_RUN_NAME,just_grpo_gsm8k_3b_16t2g_gen2048_araux_seed${grpo.seed}}

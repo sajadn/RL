@@ -267,7 +267,12 @@ def test_one_forward_matches_two_pass_losses_metrics_and_parameter_gradients(
 
 
 @pytest.mark.parametrize("temperature", [1.0, 0.6])
-def test_ordinary_ar_batch_matches_upstream_loss_and_gradients(processors, temperature):
+@pytest.mark.parametrize(
+    "processor_name", ["PositiveDiffusionLossPostProcessor", "PositiveARLossPostProcessor"]
+)
+def test_ordinary_ar_batch_matches_upstream_loss_and_gradients(
+    processors, temperature, processor_name
+):
     train, _, combined, _ = processors
     data = trajectories()
     for key in ("prev_logprobs", "generation_logprobs", "reference_policy_logprobs"):
@@ -284,7 +289,7 @@ def test_ordinary_ar_batch_matches_upstream_loss_and_gradients(processors, tempe
         sampling_params=sampling,
         cp_normalize=False,
     )
-    processor = combined.PositiveDiffusionLossPostProcessor(**kwargs)
+    processor = getattr(combined, processor_name)(**kwargs)
     logits = torch.randn(*data["input_ids"].shape, 128, requires_grad=True)
     reference_logits = logits.detach().clone().requires_grad_()
     seqs = data["sample_mask"].sum()
@@ -390,3 +395,62 @@ def test_final_block_padding_is_mask_context_not_a_loss_target(
     assert not (prepared.data_dict["diffusion_loss_mask"] & tail).any()
     assert model.metadata["noisy_valid_lengths"].item() == rounded_length
     assert model.metadata["clean_lengths"].item() == actual_length
+
+
+@pytest.mark.parametrize("temperature", [1.0, 0.6])
+@pytest.mark.parametrize("num_microbatches", [1, 4])
+@pytest.mark.parametrize("empty_positive", [False, True])
+def test_ar_auxiliary_matches_manual_ce_and_gradients(
+    processors, temperature, num_microbatches, empty_positive
+):
+    train, _, combined, _ = processors
+    data = trajectories()
+    for key in ("prev_logprobs", "generation_logprobs", "reference_policy_logprobs"):
+        data[key] = torch.full_like(data["token_mask"], -5.0)
+    if empty_positive:
+        data["advantages"].fill_(-1)
+    data["ar_aux_enabled"] = torch.ones(data.size, dtype=torch.bool)
+    cfg = config(type="ar")
+    sampling = TrainingSamplingParams(temperature=temperature)
+    loss_fn = ClippedPGLossFn(ClippedPGLossConfig(token_level_loss=True))
+    policy_cfg = {
+        "sequence_packing": {"enabled": False},
+        "diffusion_aux_loss": cfg.model_dump(),
+        "generation": {
+            "temperature": temperature,
+            "top_k": None,
+            "top_p": 1.0,
+            "stop_token_ids": [6],
+        },
+    }
+    kwargs = dict(cfg=policy_cfg, num_microbatches=num_microbatches)
+    counts = dict(
+        global_valid_seqs=data["sample_mask"].sum(),
+        global_valid_toks=(data["token_mask"] * data["sample_mask"][:, None]).sum(),
+    )
+    logits = torch.randn(*data["input_ids"].shape, 128, requires_grad=True)
+    reference = logits.detach().clone().requires_grad_()
+    raw = logits.detach().clone()
+    actual, metrics = combined.PositiveARLossPostProcessor(
+        loss_fn=loss_fn, sampling_params=None, **kwargs
+    )(data, **counts)(logits)
+    policy_loss, _ = train.LossPostProcessor(
+        loss_fn=loss_fn, sampling_params=sampling, **kwargs
+    )(data, **counts)(reference / temperature)
+    # Positive row zero: targets 3, 4, and stop token 6. Exclude prompt,
+    # tool feedback, tokens after EOS, nonpositive rows, and sample_mask=0.
+    mask = torch.zeros_like(data["token_mask"][:, 1:])
+    if not empty_positive:
+        mask[0, [1, 2, 4]] = 1
+    logprobs = reference[:, :-1].log_softmax(-1).gather(
+        -1, data["input_ids"][:, 1:, None]
+    ).squeeze(-1)
+    ce = -cfg.weight * (logprobs * mask).sum() / counts["global_valid_toks"]
+    expected = policy_loss + num_microbatches * ce
+    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(logits.detach(), raw)
+    assert metrics["ar_aux_tokens"] == mask.sum().item()
+    assert metrics["ar_aux_loss"] == pytest.approx(ce.item())
+    actual.backward()
+    expected.backward()
+    torch.testing.assert_close(logits.grad, reference.grad)

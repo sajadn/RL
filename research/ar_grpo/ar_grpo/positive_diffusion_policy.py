@@ -1,6 +1,6 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Causal AR GRPO plus positive-completion diffusion cross-entropy."""
+"""Causal AR GRPO plus positive-completion auxiliary cross-entropy."""
 
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
@@ -12,10 +12,12 @@ from megatron.core import parallel_state
 
 from ar_grpo.policy import ARModeForMultiModeMegatronPolicyImpl
 from block_diffusion.positive_diffusion import (
+    PositiveARLoss,
     PositiveDiffusionConfig,
     PositiveDiffusionLoss,
 )
 from ar_grpo.positive_diffusion_processors import (
+    PositiveARLossPostProcessor,
     PositiveDiffusionLossPostProcessor,
     PositiveDiffusionMicrobatchProcessor,
 )
@@ -30,14 +32,12 @@ from nemo_rl.models.policy.workers.megatron_policy_worker import (
 
 
 class PositiveDiffusionARPolicyImpl(ARModeForMultiModeMegatronPolicyImpl):
-    """Compute causal policy and denoising gradients in one forward/backward."""
+    """Compute causal policy and auxiliary gradients in one forward/backward."""
 
     def __init__(self, config: PolicyConfig, *args: Any, **kwargs: Any) -> None:
         self.diffusion_config = PositiveDiffusionConfig.model_validate(
             config["diffusion_aux_loss"]
         )
-        if self.diffusion_config.type != "diffusion":
-            raise ValueError("AR GRPO supports only the diffusion auxiliary loss")
         mg = config["megatron_cfg"]
         if (
             not mg["enabled"]
@@ -70,19 +70,22 @@ class PositiveDiffusionARPolicyImpl(ARModeForMultiModeMegatronPolicyImpl):
         super().__init__(
             config,
             *args,
-            loss_postprocessor_factory=PositiveDiffusionLossPostProcessor,
+            loss_postprocessor_factory=(
+                PositiveARLossPostProcessor
+                if self.diffusion_config.type == "ar"
+                else PositiveDiffusionLossPostProcessor
+            ),
             **kwargs,
         )
         if self.mtp_enabled:
             raise ValueError("Positive diffusion AR does not support MTP heads")
-        self.prepare_microbatch_fn: PositiveDiffusionMicrobatchProcessor = (
-            PositiveDiffusionMicrobatchProcessor(
+        if self.diffusion_config.type == "diffusion":
+            self.prepare_microbatch_fn = PositiveDiffusionMicrobatchProcessor(
                 model=self.model,
                 config=self.cfg,
                 pad_token_id=self.tokenizer.pad_token_id,
                 data_parallel_rank=parallel_state.get_data_parallel_rank(),
             )
-        )
 
     def begin_train_step(
         self, loss_fn: LossFunction, gbs: int | None = None, mbs: int | None = None
@@ -93,7 +96,11 @@ class PositiveDiffusionARPolicyImpl(ARModeForMultiModeMegatronPolicyImpl):
         state = self._assert_step_open()
         state["metric_normalizations"] = {
             **state["metric_normalizations"],
-            **PositiveDiffusionLoss.metric_normalizations,
+            **(
+                PositiveARLoss
+                if self.diffusion_config.type == "ar"
+                else PositiveDiffusionLoss
+            ).metric_normalizations,
         }
 
     @contextmanager
@@ -121,6 +128,18 @@ class PositiveDiffusionARPolicyImpl(ARModeForMultiModeMegatronPolicyImpl):
     def train_microbatch(self, data: BatchedDataDict[Any]) -> None:
         if self.diffusion_config.weight == 0:
             return super().train_microbatch(data)
+        if self.diffusion_config.type == "ar":
+            training_data = BatchedDataDict(data)
+            training_data["ar_aux_enabled"] = torch.ones_like(
+                data["input_lengths"], dtype=torch.bool
+            )
+            # Keep CE untempered; the processor applies policy sampling separately.
+            saved_sampling = self.sampling_params
+            self.sampling_params = None
+            try:
+                return super().train_microbatch(training_data)
+            finally:
+                self.sampling_params = saved_sampling
         # Keep every row, including empty selections, so all DP/TP ranks execute
         # the same number of forward/backward calls and vocabulary collectives.
         # A per-sample flag keeps the batch valid for NeMo-RL's sequence-width
