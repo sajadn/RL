@@ -27,7 +27,7 @@ loss_fn:
   truncated_importance_sampling_ratio: 2.0
 checkpointing:
   checkpoint_dir: ${oc.env:CHECKPOINT_DIR,results/ar_grpo_gsm8k_3b_2t2g_gen2048_seed${grpo.seed}}
-  keep_top_k: null
+  keep_top_k: 10
   save_period: 10
 policy:
   model_name: ${oc.env:MODEL,nvidia/Nemotron-Labs-Diffusion-3B}
