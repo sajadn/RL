@@ -1,0 +1,161 @@
+# GSM8K AR GRPO without auxiliary loss, 2048 generated tokens.
+# Run research/just_grpo/run_ar_grpo.py from the repository root.
+# PYTHONPATH: repo root, research/block_diffusion, research/ar_grpo.
+# Set NRL_VLLM_PY_EXECUTABLE to the provisioned diffusion-vLLM interpreter
+# and EXPANDABLE_SEGMENTS=false in the launcher.
+# Four nodes x 8 GPUs: 2 training + 2 generation; validation shares generation GPUs.
+# AR and confidence-threshold diffusion evaluation are defined explicitly below.
+defaults: ../../../../examples/configs/grpo_math_1B.yaml
+grpo:
+  num_prompts_per_step: 128
+  num_generations_per_prompt: 8
+  max_num_epochs: 1000
+  max_num_steps: 400
+  val_period: 10
+  val_at_start: true
+  val_at_end: true
+  # Include all 1319 test examples with the runner's whole-batch limit.
+  max_val_samples: 1408
+  val_batch_size: 128
+  async_grpo:
+    enabled: true
+  skip_reference_policy_logprobs_calculation: true
+loss_fn:
+  reference_policy_kl_penalty: 0.0
+  use_importance_sampling_correction: true
+  truncated_importance_sampling_type: tis
+  truncated_importance_sampling_ratio: 2.0
+checkpointing:
+  checkpoint_dir: ${oc.env:CHECKPOINT_DIR,results/ar_grpo_gsm8k_3b_2t2g_gen2048_seed${grpo.seed}}
+  keep_top_k: null
+  save_period: 10
+policy:
+  model_name: ${oc.env:MODEL,nvidia/Nemotron-Labs-Diffusion-3B}
+  tokenizer:
+    chat_template_kwargs:
+      enable_thinking: false
+  train_global_batch_size: ${mul:${grpo.num_prompts_per_step},${grpo.num_generations_per_prompt}}
+  train_micro_batch_size: 2
+  logprob_batch_size: 2
+  max_total_sequence_length: 3072
+  worker_extension_cls_fqn: ar_grpo.policy.ARModeForMultiModeMegatronPolicy
+  dtensor_cfg:
+    enabled: false
+  megatron_cfg:
+    enabled: true
+    activation_checkpointing: true
+    defer_fp32_logits: true
+    optimizer:
+      lr: ${policy.optimizer.kwargs.lr}
+      min_lr: 3.0e-08
+      weight_decay: ${policy.optimizer.kwargs.weight_decay}
+      use_precision_aware_optimizer: false
+    scheduler:
+      lr_decay_iters: ${grpo.max_num_steps}
+      lr_warmup_init: ${mul:${policy.optimizer.kwargs.lr},0.1}
+    distributed_data_parallel_config:
+      grad_reduce_in_fp32: true
+      overlap_grad_reduce: false
+      overlap_param_gather: false
+  sequence_packing:
+    enabled: false
+  optimizer:
+    kwargs:
+      lr: 1.0e-6
+      fused: true
+  generation:
+    max_new_tokens: 2048
+    val_temperature: 1.0
+    stop_token_ids:
+    - 11
+    worker_extension_cls_fqn: block_diffusion.generation.reference_vllm.ReferenceVllmAsyncWorker
+    mcore_generation_config:
+      cuda_graph_impl: none
+      materialize_only_last_token_logits: false
+      refit_backend: gloo
+    vllm_cfg:
+      async_engine: true
+      gpu_memory_utilization: 0.55
+      max_model_len: 3136
+      enforce_eager: true
+      enable_vllm_metrics_logger: false
+    vllm_kwargs:
+      diffusion_config: null
+      attention_backend: TRITON_ATTN
+      max_num_seqs: 32
+      kernel_config:
+        enable_flashinfer_autotune: false
+      hf_overrides:
+        architectures:
+        - NemotronLabsDiffusionForCausalLM
+        block_size: 16
+    colocated:
+      enabled: false
+      resources:
+        gpus_per_node: 8
+        num_nodes: 2
+    # Both modes use the same GSM8K test prompts and 2048-token budget.
+    vllm_val_dllm_variants:
+      diffusion_conf09:
+        temperature: 1.0
+        vllm_cfg:
+          gpu_memory_utilization: 0.55
+        vllm_kwargs:
+          hf_overrides:
+            architectures:
+            - NemotronLabsDiffusionModel
+            block_size: 16
+          diffusion_config:
+            canvas_length: 16
+            max_denoising_steps: 16
+            selection_policy: confidence_threshold
+            confidence_threshold: 0.9
+            temperature: 1.0
+            emit_full_blocks: false
+            return_reveal_steps: false
+            return_entropy: false
+      ar:
+        temperature: 1.0
+        vllm_cfg:
+          gpu_memory_utilization: 0.55
+        vllm_kwargs:
+          hf_overrides:
+            architectures:
+            - NemotronLabsDiffusionForCausalLM
+            block_size: 16
+          diffusion_config: null
+  refit_buffer_size_gb: 1.0
+logger:
+  log_dir: ${oc.env:LOG_DIR,logs/ar_grpo_gsm8k_3b_2t2g_gen2048_seed${grpo.seed}}
+  wandb_enabled: true
+  monitor_gpus: false
+  wandb:
+    project: diffusion_rl
+    name: ${oc.env:WANDB_RUN_NAME,ar_grpo_gsm8k_3b_2t2g_gen2048_seed${grpo.seed}}
+cluster:
+  gpus_per_node: 8
+  num_nodes: 4
+data:
+  _override_: true
+  shuffle: true
+  num_workers: 1
+  use_multiple_dataloader: false
+  max_input_seq_length: 1024
+  train:
+    dataset_name: gsm8k
+    split: train
+    extract_answer: true
+  validation:
+    dataset_name: gsm8k
+    split: test
+    extract_answer: true
+  default:
+    prompt_file: research/just_grpo/configs/prompts/gsm8k_boxed.txt
+    system_prompt_file: null
+    processor: math_hf_data_processor
+    env_name: math
+env:
+  _override_: true
+  math:
+    num_workers: 8
+    math_verify_impl: hf_math_verify

@@ -1,0 +1,60 @@
+# GSM8K JustGRPO without auxiliary loss: 16 training + 2 generation nodes.
+# Run research/just_grpo/run_just_grpo.py with research/just_grpo on PYTHONPATH.
+# Inherit the matched AR recipe's data, optimizer, budgets, and dual evaluation.
+defaults: ./ar_grpo-gsm8k-3b-4n8g-megatron-vllm-async-dualval-gen2048.yaml
+
+policy:
+  worker_extension_cls_fqn: just_grpo.algorithms.block_just_grpo_policy_worker.BlockJustGRPOPolicyWorker
+  generation:
+    vllm_kwargs:
+      hf_overrides:
+        architectures:
+        - NemotronLabsDiffusionModel
+      diffusion_config:
+        canvas_length: ${just_grpo.sampling.block_size}
+        max_denoising_steps: ${just_grpo.sampling.max_steps}
+        temperature: ${just_grpo.sampling.temperature}
+        selection_policy: ${just_grpo.sampling.selection_policy}
+        confidence_threshold: ${just_grpo.sampling.threshold}
+        return_reveal_steps: false
+        return_entropy: false
+
+cluster:
+  num_nodes: 18
+
+checkpointing:
+  checkpoint_dir: ${oc.env:CHECKPOINT_DIR,results/just_grpo_gsm8k_3b_16t2g_gen2048_seed${grpo.seed}}
+logger:
+  log_dir: ${oc.env:LOG_DIR,logs/just_grpo_gsm8k_3b_16t2g_gen2048_seed${grpo.seed}}
+  wandb:
+    name: ${oc.env:WANDB_RUN_NAME,just_grpo_gsm8k_3b_16t2g_gen2048_seed${grpo.seed}}
+
+just_grpo:
+  distributed: true
+  runtime: reference_vllm
+  generation_python: ${oc.env:NRL_VLLM_PY_EXECUTABLE,null}
+  # Async policy lag makes a finite generation-KL abort threshold inappropriate.
+  # Non-finite generation KL still aborts; this does not enable a KL penalty.
+  max_generation_kl: .inf
+  training_token_fraction: 1.0
+  schedule:
+    mask_token_id: 100
+    block_size: 16
+    reveal_tokens_per_step: 1
+  sampling:
+    temperature: ${policy.generation.temperature}
+    block_size: ${just_grpo.schedule.block_size}
+    max_steps: 16
+    selection_policy: leftmost
+    threshold: 0.9
+    returns_reveal_steps: false
+    returns_entropy: false
+  # Inherited dual-validation modes override this rollout-matching fallback.
+  validation_sampling:
+    temperature: ${policy.generation.val_temperature}
+    block_size: ${just_grpo.sampling.block_size}
+    max_steps: ${just_grpo.sampling.max_steps}
+    selection_policy: ${just_grpo.sampling.selection_policy}
+    threshold: ${just_grpo.sampling.threshold}
+    returns_reveal_steps: ${just_grpo.sampling.returns_reveal_steps}
+    returns_entropy: ${just_grpo.sampling.returns_entropy}

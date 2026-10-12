@@ -1,0 +1,23 @@
+# GSM8K just_grpo: add diffusion CE on positive-advantage completions.
+# Inherit the baseline topology, rollout settings, and AR/diffusion evaluation.
+# Use the parent's entrypoint and environment, with fresh output directories.
+defaults: ./just_grpo-gsm8k-3b-18n8g-megatron-vllm-async-dualval-gen2048.yaml
+
+policy:
+  diffusion_aux_loss:
+    type: diffusion
+    weight: 0.1
+    positive_samples: advantage
+    mask_token_id: ${just_grpo.schedule.mask_token_id}
+    block_size: ${just_grpo.schedule.block_size}
+    # Uniform per-sequence masking probability; inverse-probability weighted CE.
+    mask_probability_min: 0.05
+    mask_probability_max: 1.0
+    seed: ${grpo.seed}
+
+checkpointing:
+  checkpoint_dir: ${oc.env:CHECKPOINT_DIR,results/just_grpo_gsm8k_3b_16t2g_gen2048_diffaux_seed${grpo.seed}}
+logger:
+  log_dir: ${oc.env:LOG_DIR,logs/just_grpo_gsm8k_3b_16t2g_gen2048_diffaux_seed${grpo.seed}}
+  wandb:
+    name: ${oc.env:WANDB_RUN_NAME,just_grpo_gsm8k_3b_16t2g_gen2048_diffaux_seed${grpo.seed}}
