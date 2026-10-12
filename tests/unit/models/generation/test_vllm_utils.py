@@ -944,3 +944,36 @@ def test_pad_and_align_rejects_expert_ids_overflowing_dtype(monkeypatch):
             device=torch.device("cpu"),
             routed_experts_dtype=torch.int8,
         )
+
+
+def test_diffusion_counters_sum_engines_and_use_window_deltas():
+    start = aggregate_spec_decode_counters(
+        [
+            {"vllm:diffusion_num_denoising_steps": 10.0,
+             "vllm:diffusion_num_committed_tokens": 32.0},
+            {"vllm:diffusion_num_denoising_steps": 20.0,
+             "vllm:diffusion_num_committed_tokens": 64.0},
+        ]
+    )
+    end = aggregate_spec_decode_counters(
+        [
+            {"vllm:diffusion_num_denoising_steps": 14.0,
+             "vllm:diffusion_num_committed_tokens": 48.0},
+            {"vllm:diffusion_num_denoising_steps": 24.0,
+             "vllm:diffusion_num_committed_tokens": 80.0},
+        ]
+    )
+    metrics = compute_spec_decode_metrics(start, end)
+    assert metrics["vllm/denoising_nfe"] == 8
+    assert metrics["vllm/diffusion_committed_tokens"] == 32
+    assert metrics["vllm/tokens_per_denoising_nfe"] == 4
+    assert metrics["vllm/denoising_nfe_per_token"] == 0.25
+    idle = compute_spec_decode_metrics(end, end)
+    assert idle["vllm/denoising_nfe"] == 0
+    assert idle["vllm/tokens_per_denoising_nfe"] == 0
+    assert idle["vllm/denoising_nfe_per_token"] == 0
+
+
+def test_ar_does_not_report_fabricated_denoising_counts():
+    metrics = compute_spec_decode_metrics({}, {})
+    assert "vllm/denoising_nfe" not in metrics

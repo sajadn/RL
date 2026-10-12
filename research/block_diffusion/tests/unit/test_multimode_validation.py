@@ -13,17 +13,22 @@
 # limitations under the License.
 """Mode isolation, current-weight refits, matched data, and failure cleanup."""
 
+import asyncio
 import copy
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from omegaconf import OmegaConf
 
 from just_grpo.config import validate_config
-from block_diffusion.generation.reference_vllm import ReferenceVllmWorkerImpl
+from block_diffusion.generation.reference_vllm import (
+    ReferenceVllmAsyncWorkerImpl,
+    ReferenceVllmWorkerImpl,
+    _diffusion_counters,
+)
 from block_diffusion.generation.validation import (
     MultiModeValidation,
     build_validation_config,
@@ -155,6 +160,10 @@ def test_modes_refit_same_weights_and_prompts_and_restore_on_error(
     rollout.wake_up.side_effect = lambda: events.append("wake rollout") or True
     for name in runner.variants:
         group = Mock(cfg={"name": name})
+        group.get_step_metrics.return_value = (
+            {"vllm/denoising_nfe": 12.0, "vllm/tokens_per_denoising_nfe": 4.0}
+            if name == "diffusion_conf09" else {}
+        )
         group.sleep.side_effect = lambda n=name: events.append(f"sleep {n}") or True
         group.wake_up.side_effect = lambda n=name: events.append(f"wake {n}") or True
         runner.generations[name] = group
@@ -206,6 +215,12 @@ def test_modes_refit_same_weights_and_prompts_and_restore_on_error(
         assert metrics["accuracy"] == metrics["accuracy/diffusion_conf09"] == 0.8
         assert metrics["accuracy/ar"] == 0.7
         assert timings["total_validation_time"] == 4
+        assert metrics["vllm/denoising_nfe/diffusion_conf09"] == 12
+        assert metrics["vllm/denoising_nfe"] == 12
+        assert "vllm/denoising_nfe/ar" not in metrics
+        for group in runner.generations.values():
+            group.snapshot_step_metrics.assert_called_once()
+            group.get_step_metrics.assert_called_once()
     assert loader.cursor == 7
     assert events[0] == "sleep rollout"
     assert events[-1] == "wake rollout"
@@ -311,3 +326,44 @@ def test_validation_groups_sleep_before_next_engine_initialization(monkeypatch):
     for group in groups[:2]:
         group.shutdown.assert_called_once()
     rollout.shutdown.assert_not_called()
+
+
+def test_diffusion_nfe_counts_one_copy_per_tensor_parallel_engine():
+    reports = [
+        {"nfe": 0, "committed_tokens": 0},
+        {"nfe": 7, "committed_tokens": 16},
+        {"nfe": 7, "committed_tokens": 16},
+    ]
+    assert _diffusion_counters(reports) == {
+        "vllm:diffusion_num_denoising_steps": 7.0,
+        "vllm:diffusion_num_committed_tokens": 16.0,
+    }
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("diffusion", [False, True])
+def test_reference_worker_reads_actual_sampler_counters(asynchronous, diffusion):
+    cls = ReferenceVllmAsyncWorkerImpl if asynchronous else ReferenceVllmWorkerImpl
+    worker = object.__new__(cls)
+    worker.cfg = {"vllm_kwargs": {"diffusion_config": {} if diffusion else None}}
+    reports = [{"nfe": 5, "committed_tokens": 16}]
+    rpc = AsyncMock(return_value=reports) if asynchronous else Mock(return_value=reports)
+    worker.llm = SimpleNamespace(
+        collective_rpc=rpc,
+        get_metrics=Mock(
+            return_value=[SimpleNamespace(name="vllm:spec_decode_num_drafts", value=2)]
+        ),
+    )
+    result = (
+        asyncio.run(worker._get_raw_spec_counters())
+        if asynchronous
+        else worker._get_raw_spec_counters()
+    )
+    assert result["vllm:spec_decode_num_drafts"] == 2
+    if diffusion:
+        assert result["vllm:diffusion_num_denoising_steps"] == 5
+        assert result["vllm:diffusion_num_committed_tokens"] == 16
+        rpc.assert_called_once()
+    else:
+        assert "vllm:diffusion_num_denoising_steps" not in result
+        rpc.assert_not_called()

@@ -25,10 +25,29 @@ from nemo_rl.models.generation.interfaces import (
     GenerationDatumSpec,
     GenerationOutputSpec,
 )
+from nemo_rl.models.generation.vllm.collective_rpc import resolve_collective_rpc_result
 from nemo_rl.models.generation.vllm.vllm_worker import VllmGenerationWorkerImpl
 from nemo_rl.models.generation.vllm.vllm_worker_async import (
     VllmAsyncGenerationWorkerImpl,
 )
+
+
+def _read_diffusion_counters(worker: Any) -> dict[str, int]:
+    """Read sampler counters in the engine process without resetting them."""
+    # The diffusion fork is only installed in generation workers.
+    from vllm.model_executor.models.nemotron_dllm import get_diffusion_tpf_stats
+
+    return get_diffusion_tpf_stats()
+
+
+def _diffusion_counters(reports: list[dict[str, int]]) -> dict[str, float]:
+    """Count one copy per TP/PP engine; the generation group sums DP engines."""
+    # TP ranks replicate sampler counts; non-sampling PP ranks return zeros.
+    report = max(reports, key=lambda item: item["nfe"])
+    return {
+        "vllm:diffusion_num_denoising_steps": float(report["nfe"]),
+        "vllm:diffusion_num_committed_tokens": float(report["committed_tokens"]),
+    }
 
 
 class _ReferenceDiffusionSampling:
@@ -108,6 +127,14 @@ class _ReferenceDiffusionSampling:
 
 
 class ReferenceVllmWorkerImpl(_ReferenceDiffusionSampling, VllmGenerationWorkerImpl):
+    def _get_raw_spec_counters(self) -> dict[str, float | list[float]]:
+        metrics = super()._get_raw_spec_counters()
+        if self.cfg["vllm_kwargs"]["diffusion_config"] is not None:
+            metrics.update(
+                _diffusion_counters(self.llm.collective_rpc(_read_diffusion_counters))
+            )
+        return metrics
+
     def generate(
         self, data: BatchedDataDict[GenerationDatumSpec], greedy: bool = False
     ) -> BatchedDataDict[GenerationOutputSpec]:
@@ -118,6 +145,15 @@ class ReferenceVllmWorkerImpl(_ReferenceDiffusionSampling, VllmGenerationWorkerI
 class ReferenceVllmAsyncWorkerImpl(
     _ReferenceDiffusionSampling, VllmAsyncGenerationWorkerImpl
 ):
+    async def _get_raw_spec_counters(self) -> dict[str, float | list[float]]:
+        metrics = super()._get_raw_spec_counters()
+        if self.cfg["vllm_kwargs"]["diffusion_config"] is not None:
+            reports = await resolve_collective_rpc_result(
+                self.llm.collective_rpc(_read_diffusion_counters)
+            )
+            metrics.update(_diffusion_counters(reports))
+        return metrics
+
     async def generate_async(
         self, data: BatchedDataDict[GenerationDatumSpec], greedy: bool = False
     ) -> AsyncIterator[tuple[int, BatchedDataDict[GenerationOutputSpec]]]:

@@ -527,7 +527,7 @@ def model_dump_chat_response_with_dynamic_message_fields(
 def aggregate_spec_decode_counters(
     worker_metrics: list[dict[str, float | list[float]]],
 ) -> dict[str | tuple[str, int], float]:
-    """Aggregate speculative decoding counters from multiple workers.
+    """Aggregate speculative decoding and diffusion counters from workers.
 
     Combines spec decode metrics collected from DP leader workers into
     a single aggregated counter dictionary.
@@ -551,7 +551,10 @@ def aggregate_spec_decode_counters(
 
     for report in worker_metrics:
         for metric_name, value in report.items():
-            if "spec_decode" in metric_name:
+            if "spec_decode" in metric_name or metric_name in (
+                "vllm:diffusion_num_denoising_steps",
+                "vllm:diffusion_num_committed_tokens",
+            ):
                 if isinstance(value, list):
                     # Per-position metrics (e.g., acceptance counts at each draft position)
                     for position, pos_value in enumerate(value, 1):
@@ -610,6 +613,21 @@ def compute_spec_decode_metrics(
         "vllm/spec_acceptance_length": acceptance_length,
         "vllm/spec_acceptance_rate": acceptance_rate,
     }
+
+    # Reference diffusion workers expose request-denoising-step counts, excluding
+    # prompt prefill and block KV commits. Async training uses a wall-clock window,
+    # so these need not belong to the exact trajectories consumed by this update.
+    if "vllm:diffusion_num_denoising_steps" in keys:
+        nfe = delta["vllm:diffusion_num_denoising_steps"]
+        tokens = delta.get("vllm:diffusion_num_committed_tokens", 0.0)
+        spec_metrics.update(
+            {
+                "vllm/denoising_nfe": nfe,
+                "vllm/diffusion_committed_tokens": tokens,
+                "vllm/tokens_per_denoising_nfe": tokens / nfe if nfe > 0 else 0.0,
+                "vllm/denoising_nfe_per_token": nfe / tokens if tokens > 0 else 0.0,
+            }
+        )
 
     # Add per-position metrics for detailed analysis
     for key, value in delta.items():

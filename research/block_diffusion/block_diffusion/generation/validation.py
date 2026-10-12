@@ -213,6 +213,7 @@ class MultiModeValidation:
                     config = master_config.model_copy(deep=True)
                     config.policy["generation"] = group.cfg
                     print(f"Validation decode: {name}", flush=True)
+                    group.snapshot_step_metrics()
                     values, elapsed = validate(
                         group,
                         val_dataloader,
@@ -222,6 +223,15 @@ class MultiModeValidation:
                         master_config=config,
                         logger=logger if index == 0 else None,
                         processor=processor,
+                    )
+                    values.update(
+                        {
+                            key: value
+                            for key, value in group.get_step_metrics().items()
+                            if key.startswith("vllm/denoising_")
+                            or key.startswith("vllm/diffusion_")
+                            or key == "vllm/tokens_per_denoising_nfe"
+                        }
                     )
                     metrics.update(
                         {f"{key}/{name}": value for key, value in values.items()}
