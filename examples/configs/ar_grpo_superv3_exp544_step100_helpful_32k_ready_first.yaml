@@ -1,0 +1,55 @@
+# Original OPD 48K-context, 32K-generation, 28K-thinking experiment.
+# Preserve all inherited settings; replace only the in-order sampler.
+defaults: ar_grpo_superv3_exp544_step100_helpful_32k_in_order.yaml
+async_rl:
+  _override_: true
+  sampler:
+    name: ready_first
+    max_staleness_versions: 1
+  recompute_kv_cache_after_weight_updates: false
+  min_groups_for_streaming_train: 8
+  max_inflight_prompts: 240
+  max_buffered_rollouts: 240
+  diagnostics: false
+  rollout_failure:
+    max_infra_attempts_per_prompt: 5
+    max_data_attempts_per_prompt: 2
+    backoff_base_s: 1.0
+    max_backoff_s: 30.0
+    max_skipped_prompts: 0
+    max_consecutive_dropped_prompts: 0
+    min_step_batch_fraction: 0.9
+    on_dropped_prompt: shrink
+    max_replacement_attempts: 1
+    replacement_reserve_prompts: 1
+    native:
+      generation_timeout_s: null
+      env_timeout_s: null
+    nemo_gym:
+      rollout_timeout_s: 2400
+      max_row_attempts: 3
+  stall_watchdog:
+    interval_s: 30.0
+    stall_timeout_s: 2700
+    stall_action: abort
+    gym_subprocess_check: true
+  generation_fleet_health:
+    enabled: false
+    probe_interval_s: 5.0
+    probe_timeout_s: 2.0
+    unhealthy_threshold: 3
+    healthy_threshold: 2
+    selection: least_outstanding
+    max_restart_attempts_per_shard: 5
+    restart_dead_shards: false
+    restart_timeout_s: 1800.0
+    restart_backoff_s: 60.0
+    min_healthy_shards: 1
+    refit_timeout_s: 300.0
+  generation_router:
+    enabled: false
+    port_range_low: 1202
+    port_range_high: 1300
+    backend_timeout_s: 600.0
+    connect_timeout_s: 5.0
+    no_healthy_backend_status: 409
