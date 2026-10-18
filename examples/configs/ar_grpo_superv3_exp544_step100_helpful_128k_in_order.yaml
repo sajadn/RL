@@ -1,0 +1,60 @@
+# OPD AR GRPO: 128K total context, 108K thinking, 112K total output per call.
+# Fresh original OPD initialization; 8 training + 16 generation nodes.
+# TP8 policy / TP1 generation, activation checkpointing, no sequence packing.
+defaults: ar_grpo_superv3_exp544_step100_helpful_32k_in_order.yaml
+
+policy:
+  max_total_sequence_length: 131072
+  tokenizer:
+    chat_template_kwargs:
+      reasoning_budget: 110592
+  megatron_cfg:
+    model_overrides:
+      seq_length: 131072
+  dynamic_batching:
+    train_mb_tokens: 131072
+    logprob_mb_tokens: 131072
+  sequence_packing:
+    enabled: false
+    train_mb_tokens: 131072
+    logprob_mb_tokens: 131072
+  generation:
+    max_new_tokens: 114688
+    vllm_cfg:
+      max_model_len: 131072
+      max_num_seqs: 2
+    mcore_generation_config:
+      max_model_len: 131072
+      max_tokens: 114688
+    sglang_cfg:
+      context_length: 131072
+
+grpo:
+  reward_shaping:
+    max_response_length: 131072
+
+env:
+  nemo_gym:
+    global_aiohttp_client_timeout_s: 7200
+    policy_model:
+      responses_api_models:
+        vllm_model:
+          chat_template_kwargs:
+            reasoning_budget: 110592
+          extra_body:
+            thinking_token_budget: 110592
+
+logger:
+  monitor_gpus: true
+  gpu_monitoring:
+    collection_interval: 10
+    flush_interval: 10
+  wandb:
+    name: ${oc.env:WANDB_RUN_NAME,ar_superv3_opd_helpful_128k_in_order}
+
+async_rl:
+  rollout_failure:
+    nemo_gym:
+      rollout_timeout_s: 7200
+  stall_watchdog:
+    stall_timeout_s: 10800

@@ -1,0 +1,45 @@
+# 64K context, 54K thinking, 56K output; packed ready-first AR GRPO.
+# Preserve the 300-update target and TP2 / CP8 / DP4 training topology.
+defaults: ar_grpo_superv3_exp544_step100_helpful_128k_ready_first_tp2_cp8_300steps.yaml
+
+policy:
+  max_total_sequence_length: 65536
+  tokenizer:
+    chat_template_kwargs:
+      reasoning_budget: 55296
+  megatron_cfg:
+    model_overrides:
+      seq_length: 65536
+  dynamic_batching:
+    train_mb_tokens: 65536
+    logprob_mb_tokens: 65536
+  sequence_packing:
+    train_mb_tokens: 65536
+    logprob_mb_tokens: 65536
+  generation:
+    max_new_tokens: 57344
+    vllm_cfg:
+      max_model_len: 65536
+    mcore_generation_config:
+      max_model_len: 65536
+      max_tokens: 57344
+    sglang_cfg:
+      context_length: 65536
+
+grpo:
+  reward_shaping:
+    max_response_length: 65536
+
+env:
+  nemo_gym:
+    policy_model:
+      responses_api_models:
+        vllm_model:
+          chat_template_kwargs:
+            reasoning_budget: 55296
+          extra_body:
+            thinking_token_budget: 55296
+
+logger:
+  wandb:
+    name: ${oc.env:WANDB_RUN_NAME,ar_superv3_opd_helpful_64k_ready_first_tp2_cp8_300steps}

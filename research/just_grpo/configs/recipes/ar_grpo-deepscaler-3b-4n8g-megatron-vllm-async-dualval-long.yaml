@@ -1,7 +1,7 @@
 # AR GRPO on Nemotron-Labs-Diffusion-3B: DeepScaleR train, AIME2024 validation.
 # Adapted from diffusion_RL/RL/examples/configs/
 # deepscaler_nemotron_labs_diffusion_3b_vllm_ar_async_grpo_megatron_2t4g.yaml.
-# Run with research/just_grpo/run_ar_grpo.py (not the diffusion training driver).
+# Run with research/ar_grpo/run_ar_grpo.py (not the diffusion training driver).
 # Set NRL_VLLM_PY_EXECUTABLE to the provisioned diffusion-capable vLLM runtime;
 # Include the repo, research/block_diffusion, and research/ar_grpo in PYTHONPATH.
 # EXPANDABLE_SEGMENTS=false.

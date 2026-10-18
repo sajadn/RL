@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "ar-grpo"
 version = "0.1.0"
 description = "Causal Nemotron AR GRPO policy adapter on NeMo RL"
-readme = "LEGACY_GRPO.md"
+readme = "legacy-grpo.md"
 requires-python = ">=3.13.14,<3.14"
 dependencies = ["block-diffusion", "nemo-rl"]
 

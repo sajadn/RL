@@ -11,16 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""AR GRPO with native math datasets and shared AR/diffusion validation."""
+"""AR GRPO through SingleController or the legacy multi-mode controllers."""
 
 import argparse
 import os
+import runpy
 from pathlib import Path
-
-from omegaconf import DictConfig, OmegaConf
+from typing import Any, cast
 
 from block_diffusion import training
 from block_diffusion.generation.validation import validation_variants
+from omegaconf import DictConfig, OmegaConf
+
 from nemo_rl.utils.config import (
     load_config,
     parse_hydra_overrides,
@@ -28,9 +30,11 @@ from nemo_rl.utils.config import (
 )
 
 
-def run(config: DictConfig, *, generation_python: str) -> None:
-    """Use the causal policy adapter and upstream GRPO controllers."""
-    rollout = OmegaConf.to_container(config.policy.generation, resolve=True)
+def _validate_causal_policy(config: DictConfig) -> dict[str, Any]:
+    """Require causal engines and a matching policy adapter for either controller."""
+    rollout = cast(
+        dict[str, Any], OmegaConf.to_container(config.policy.generation, resolve=True)
+    )
     if rollout["vllm_kwargs"]["diffusion_config"] is not None or rollout["vllm_kwargs"][
         "hf_overrides"
     ]["architectures"] != ["NemotronLabsDiffusionForCausalLM"]:
@@ -40,6 +44,12 @@ def run(config: DictConfig, *, generation_python: str) -> None:
         "ar_grpo.positive_diffusion_policy.PositiveDiffusionARPolicy",
     ):
         raise ValueError("AR GRPO requires the Nemotron causal policy worker")
+    return rollout
+
+
+def run(config: DictConfig, *, generation_python: str) -> None:
+    """Run the legacy GRPO controller with shared AR/diffusion validation."""
+    rollout = _validate_causal_policy(config)
     if config.grpo.async_grpo.enabled and rollout["colocated"]["enabled"]:
         raise ValueError("Async reference vLLM requires dedicated generation GPUs")
     if not validation_variants(rollout):
@@ -52,8 +62,8 @@ def main() -> None:
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path(__file__).parent
-        / "configs/recipes/ar_grpo-deepscaler-3b-4n8g-megatron-vllm-async-dualval-long.yaml",
+        default=Path(__file__).resolve().parents[1]
+        / "just_grpo/configs/recipes/ar_grpo-deepscaler-3b-4n8g-megatron-vllm-async-dualval-long.yaml",
     )
     args, overrides = parser.parse_known_args()
     generation_python = os.environ.get("NRL_VLLM_PY_EXECUTABLE")
@@ -62,7 +72,35 @@ def main() -> None:
     register_omegaconf_resolvers()
     config = parse_hydra_overrides(load_config(args.config), overrides)
     OmegaConf.resolve(config)
-    run(config, generation_python=generation_python)
+    if config.grpo.async_grpo is not None:
+        run(config, generation_python=generation_python)
+        return
+
+    _validate_causal_policy(config)
+    # SingleController actor environments are only needed for this controller.
+    from nemo_rl.distributed.ray_actor_environment_registry import (
+        ACTOR_ENVIRONMENT_REGISTRY,
+        get_actor_python_env,
+    )
+
+    ACTOR_ENVIRONMENT_REGISTRY[config.policy.worker_extension_cls_fqn] = (
+        get_actor_python_env(
+            "nemo_rl.models.policy.workers.megatron_policy_worker.MegatronPolicyWorker"
+        )
+    )
+    ACTOR_ENVIRONMENT_REGISTRY[
+        "nemo_rl.models.generation.vllm.vllm_worker_async.VllmAsyncGenerationWorker"
+    ] = generation_python
+    ACTOR_ENVIRONMENT_REGISTRY["nemo_rl.environments.nemo_gym.NemoGym"] = os.environ[
+        "NRL_GYM_PY_EXECUTABLE"
+    ]
+    runpy.run_path(
+        str(
+            Path(__file__).resolve().parents[2]
+            / "examples/run_grpo_single_controller.py"
+        ),
+        run_name="__main__",
+    )
 
 
 if __name__ == "__main__":

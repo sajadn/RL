@@ -1,5 +1,5 @@
 # Positive-completion diffusion CE added to causal AR GRPO.
-# Run: uv run research/just_grpo/run_ar_grpo.py --config research/ar_grpo/configs/positive_diffusion.yaml
+# Run: uv run research/ar_grpo/run_ar_grpo.py --config research/ar_grpo/configs/positive_diffusion.yaml
 # Set NRL_VLLM_PY_EXECUTABLE and EXPANDABLE_SEGMENTS=false as for the parent recipe.
 defaults: ../../just_grpo/configs/recipes/ar_grpo-deepscaler-3b-4n8g-megatron-vllm-async-dualval-long.yaml
 

@@ -1,5 +1,5 @@
 # GSM8K AR GRPO without auxiliary loss, 2048 generated tokens.
-# Run research/just_grpo/run_ar_grpo.py from the repository root.
+# Run research/ar_grpo/run_ar_grpo.py from the repository root.
 # PYTHONPATH: repo root, research/block_diffusion, research/ar_grpo.
 # Set NRL_VLLM_PY_EXECUTABLE to the provisioned diffusion-vLLM interpreter
 # and EXPANDABLE_SEGMENTS=false in the launcher.

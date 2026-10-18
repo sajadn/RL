@@ -20,13 +20,13 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, Mock
 
 import pytest
-from omegaconf import OmegaConf
-
 from block_diffusion import training
 from block_diffusion.generation.validation import (
     build_validation_config,
     validation_variants,
 )
+from omegaconf import OmegaConf
+
 from nemo_rl.utils.config import load_config, register_omegaconf_resolvers
 
 PROJECT = Path(__file__).resolve().parents[2]
@@ -87,7 +87,7 @@ def test_shared_driver_wires_dual_validation_and_training(
     monkeypatch, tmp_path, algorithm, asynchronous, fail_training
 ):
     spec = importlib.util.spec_from_file_location(
-        "ar_recipe_driver", PROJECT / "run_ar_grpo.py"
+        "ar_recipe_driver", PROJECT.parent / "ar_grpo/run_ar_grpo.py"
     )
     driver = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(driver)
@@ -167,6 +167,8 @@ def test_shared_driver_wires_dual_validation_and_training(
     monkeypatch.setitem(sys.modules, data.__name__, data)
     from nemo_rl.distributed import (
         ray_actor_environment_registry as registry,
+    )
+    from nemo_rl.distributed import (
         virtual_cluster,
     )
     from nemo_rl.environments import utils as env_utils
@@ -249,7 +251,7 @@ def test_ar_rejects_incompatible_modes_before_starting_training(
     monkeypatch, overrides, message
 ):
     spec = importlib.util.spec_from_file_location(
-        "ar_recipe_driver", PROJECT / "run_ar_grpo.py"
+        "ar_recipe_driver", PROJECT.parent / "ar_grpo/run_ar_grpo.py"
     )
     driver = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(driver)
@@ -263,7 +265,7 @@ def test_ar_rejects_incompatible_modes_before_starting_training(
 
 def test_ar_cli_uses_native_overrides_and_generation_environment(monkeypatch, tmp_path):
     spec = importlib.util.spec_from_file_location(
-        "ar_recipe_driver", PROJECT / "run_ar_grpo.py"
+        "ar_recipe_driver", PROJECT.parent / "ar_grpo/run_ar_grpo.py"
     )
     driver = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(driver)
@@ -287,3 +289,75 @@ def test_ar_cli_uses_native_overrides_and_generation_environment(monkeypatch, tm
     assert config.policy.tokenizer.name == "/test/checkpoint"
     assert config.logger.log_dir == str(tmp_path)
     assert start.call_args.kwargs == {"generation_python": "/vllm/python"}
+
+
+@pytest.mark.parametrize(
+    "worker",
+    [
+        "ar_grpo.policy.ARModeForMultiModeMegatronPolicy",
+        "ar_grpo.positive_diffusion_policy.PositiveDiffusionARPolicy",
+    ],
+)
+def test_ar_cli_dispatches_single_controller_with_actor_environments(
+    monkeypatch: pytest.MonkeyPatch, worker: str
+) -> None:
+    spec = importlib.util.spec_from_file_location(
+        "ar_recipe_driver", PROJECT.parent / "ar_grpo/run_ar_grpo.py"
+    )
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+    registry = ModuleType("nemo_rl.distributed.ray_actor_environment_registry")
+    registry.ACTOR_ENVIRONMENT_REGISTRY = {}
+    registry.get_actor_python_env = Mock(return_value="/policy/python")
+    monkeypatch.setitem(sys.modules, registry.__name__, registry)
+    monkeypatch.setenv("NRL_VLLM_PY_EXECUTABLE", "/vllm/python")
+    monkeypatch.setenv("NRL_GYM_PY_EXECUTABLE", "/gym/python")
+    start = Mock()
+    monkeypatch.setattr(driver.runpy, "run_path", start)
+    legacy = Mock()
+    monkeypatch.setattr(training, "run", legacy)
+    repo = PROJECT.parents[1]
+    args = [
+        "run_ar_grpo.py",
+        "--config",
+        str(
+            repo
+            / "examples/configs/ar_grpo_superv3_exp544_step100_helpful_128k_ready_first_tp2_cp8_300steps.yaml"
+        ),
+        "grpo.max_num_steps=9",
+        f"policy.worker_extension_cls_fqn={worker}",
+    ]
+    monkeypatch.setattr(sys, "argv", args.copy())
+    driver.main()
+    start.assert_called_once_with(
+        str(repo / "examples/run_grpo_single_controller.py"), run_name="__main__"
+    )
+    assert sys.argv == args
+    assert registry.ACTOR_ENVIRONMENT_REGISTRY == {
+        worker: "/policy/python",
+        "nemo_rl.models.generation.vllm.vllm_worker_async.VllmAsyncGenerationWorker": "/vllm/python",
+        "nemo_rl.environments.nemo_gym.NemoGym": "/gym/python",
+    }
+    registry.get_actor_python_env.assert_called_once_with(
+        "nemo_rl.models.policy.workers.megatron_policy_worker.MegatronPolicyWorker"
+    )
+    legacy.assert_not_called()
+
+
+def test_moved_ar_cli_keeps_the_default_legacy_recipe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = importlib.util.spec_from_file_location(
+        "ar_recipe_driver", PROJECT.parent / "ar_grpo/run_ar_grpo.py"
+    )
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+    start = Mock()
+    monkeypatch.setattr(training, "run", start)
+    monkeypatch.setenv("NRL_VLLM_PY_EXECUTABLE", "/vllm/python")
+    monkeypatch.setattr(sys, "argv", ["run_ar_grpo.py"])
+    driver.main()
+    assert start.call_count == 1
+    config = start.call_args.args[0]
+    assert config.data.train.dataset_name == "DeepScaler"
+    assert config.grpo.async_grpo.enabled

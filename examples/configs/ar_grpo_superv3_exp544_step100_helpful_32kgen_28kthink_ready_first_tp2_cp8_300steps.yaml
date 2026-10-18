@@ -1,0 +1,26 @@
+# 64K total context, 32K generation, 28K thinking; packed ready-first AR GRPO.
+# Preserve the 300-update target, dataset, and TP2 / CP8 / DP4 topology.
+defaults: ar_grpo_superv3_exp544_step100_helpful_64k_ready_first_tp2_cp8_300steps.yaml
+
+policy:
+  tokenizer:
+    chat_template_kwargs:
+      reasoning_budget: 28672
+  generation:
+    max_new_tokens: 32768
+    mcore_generation_config:
+      max_tokens: 32768
+
+env:
+  nemo_gym:
+    policy_model:
+      responses_api_models:
+        vllm_model:
+          chat_template_kwargs:
+            reasoning_budget: 28672
+          extra_body:
+            thinking_token_budget: 28672
+
+logger:
+  wandb:
+    name: ${oc.env:WANDB_RUN_NAME,ar_superv3_opd_helpful_32kgen_28kthink_ready_first_tp2_cp8_300steps}

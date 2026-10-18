@@ -1,0 +1,14 @@
+# 128K context, TP2 / CP8 / DP4, packed ready-first AR GRPO for 300 updates.
+# Keep the validated 16 prompt groups x 16 responses = 256-response batch.
+defaults: ar_grpo_superv3_exp544_step100_helpful_128k_ready_first_tp2_cp8.yaml
+
+grpo:
+  max_num_steps: 300
+
+checkpointing:
+  # Leave time for checkpointing within a four-hour Slurm allocation.
+  checkpoint_must_save_by: "00:03:45:00"
+
+logger:
+  wandb:
+    name: ${oc.env:WANDB_RUN_NAME,ar_superv3_opd_helpful_128k_ready_first_tp2_cp8_300steps}

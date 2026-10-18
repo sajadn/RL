@@ -74,7 +74,7 @@ policy:
     chat_template_kwargs:
       enable_thinking: true
       reasoning_budget: 28672
-    chat_template: /lustre/fsw/portfolios/coreai/users/snorouzi/RL-trace-grpo-review-stack/examples/configs/chat_templates/exp544_step100_helpful.jinja
+    chat_template: ${oc.env:REPO_DIR,.}/examples/configs/chat_templates/exp544_step100_helpful.jinja
   hf_config_overrides:
     block_size: 16
   train_global_batch_size: 1920
@@ -246,7 +246,7 @@ policy:
         enable_auto_tools: true
         tool_parser: step3p5
         reasoning_parser: step3p5
-        chat_template: /lustre/fsw/portfolios/coreai/users/snorouzi/RL-trace-grpo-review-stack/examples/configs/chat_templates/exp544_step100_helpful.jinja
+        chat_template: ${oc.env:REPO_DIR,.}/examples/configs/chat_templates/exp544_step100_helpful.jinja
       max_num_seqs: 8
     vllm_kwargs:
       attention_backend: TRITON_ATTN
@@ -361,7 +361,7 @@ logger:
   tensorboard_enabled: false
   mlflow_enabled: false
   swanlab_enabled: false
-  monitor_gpus: false
+  monitor_gpus: true
   wandb:
     project: diffusion_rl
     name: ${oc.env:WANDB_RUN_NAME,ar_superv3_opd_helpful_32k_in_order}

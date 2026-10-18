@@ -1,0 +1,33 @@
+# 128K causal AR test: 8 training + 16 generation nodes, TP2 / CP8 / DP4.
+# Native-RoPE Bridge with packed causal TE attention is required.
+defaults: ar_grpo_superv3_exp544_step100_helpful_128k_ready_first.yaml
+grpo:
+  num_prompts_per_step: 16
+  max_num_steps: 2
+checkpointing:
+  save_period: 1
+  checkpoint_must_save_by: "00:01:45:00"
+policy:
+  train_global_batch_size: 256
+  # CP zigzag and TP sequence sharding require 2 * CP * TP = 32.
+  make_sequence_length_divisible_by: 32
+  megatron_cfg:
+    tensor_model_parallel_size: 2
+    context_parallel_size: 8
+  sequence_packing:
+    enabled: true
+env:
+  nemo_gym:
+    # Ray workers use 2000-2999; generation uses 3000-4999.
+    port_range_low: 5000
+    port_range_high: 5799
+    # Preserve service stderr for diagnosing startup failures.
+    nemo_gym_log_dir: ${logger.log_dir}/gym_servers
+    ns_tools:
+      resources_servers:
+        ns_tools:
+          # Keep the MCP server outside Gym HTTP, sandbox, and vLLM ports.
+          python_tool_port: 5900
+logger:
+  wandb:
+    name: ${oc.env:WANDB_RUN_NAME,ar_superv3_opd_helpful_128k_ready_first_tp2_cp8}

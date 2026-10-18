@@ -1,8 +1,7 @@
 # AR GRPO with multi-mode validation
 
 `ar_grpo/policy.py` contains the causal Nemotron policy adapter shared by the
-SingleController launcher (`run_ar_grpo.py`) and the legacy GRPO launcher
-(`../just_grpo/run_ar_grpo.py`). Both use
+SingleController and legacy GRPO routes in `run_ar_grpo.py`. Both use
 `ar_grpo.policy.ARModeForMultiModeMegatronPolicy`.
 
 The adapter selects causal attention for whole-batch training, SingleController
@@ -11,8 +10,9 @@ caching and restores the previous attention settings after each call.
 
 The legacy launcher uses the DeepScaleR/AIME2024 recipe under
 `../just_grpo/configs/recipes/`. Its shared generation and multi-mode validation
-remain in the `block-diffusion` package; the SingleController launcher keeps its
-existing controller behavior.
+remain in the `block-diffusion` package. The CLI selects SingleController when
+`grpo.async_grpo` is null; legacy configurations keep their existing controller
+and validation behavior.
 
 For provisioned interpreters, include `research/ar_grpo`, `research/block_diffusion`,
 and the repository root in `PYTHONPATH`.
@@ -24,7 +24,7 @@ and the repository root in `PYTHONPATH`.
 rollouts and ordinary AR GRPO scoring. Run it through the legacy launcher:
 
 ```bash
-uv run research/just_grpo/run_ar_grpo.py --config research/ar_grpo/configs/positive_diffusion.yaml
+uv run research/ar_grpo/run_ar_grpo.py --config research/ar_grpo/configs/positive_diffusion.yaml
 ```
 
 The variant adds `policy.diffusion_aux_loss.weight` (default 0.1) times a masked

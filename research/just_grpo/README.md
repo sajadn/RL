@@ -160,7 +160,7 @@ These settings also apply to Trace through the shared driver.
 
 ## AR GRPO on DeepScaleR
 
-`run_ar_grpo.py` trains Nemotron-Labs-Diffusion-3B with causal AR attention,
+`../ar_grpo/run_ar_grpo.py` trains Nemotron-Labs-Diffusion-3B with causal AR attention,
 DeepScaleR training data, and AIME2024 validation. Its recipe uses LR `1e-6`,
 2 training + 2 generation nodes, async rollouts, and no activation recomputation.
 The same checkpoint is validated in `diffusion_conf09` and `ar` modes.
@@ -168,13 +168,13 @@ The same checkpoint is validated in `diffusion_conf09` and `ar` modes.
 ```bash
 PYTHONPATH="$PWD:$PWD/research/block_diffusion:$PWD/research/ar_grpo:$PWD/research/just_grpo" EXPANDABLE_SEGMENTS=false \
 NRL_VLLM_PY_EXECUTABLE="$NRL_VLLM_PY_EXECUTABLE" \
-uv run research/just_grpo/run_ar_grpo.py \
+uv run research/ar_grpo/run_ar_grpo.py \
   --config research/just_grpo/configs/recipes/ar_grpo-deepscaler-3b-4n8g-megatron-vllm-async-dualval-long.yaml
 ```
 
 AR, JustGRPO, and Trace import the shared `block-diffusion` package and use `block_diffusion/training.py` for controller setup and the
 lifecycle of `MultiModeValidation` in `block_diffusion/generation/validation.py`.
 AR uses shifted next-token labels and a causal policy adapter; diffusion
-algorithms keep their existing unshifted labels and schedules. This launcher
-uses the legacy GRPO controllers; `research/ar_grpo/run_ar_grpo.py` is the
-separate SingleController entrypoint.
+algorithms keep their existing unshifted labels and schedules. The canonical entrypoint is `research/ar_grpo/run_ar_grpo.py`. It uses the
+legacy GRPO controllers for this recipe and SingleController for configs with
+`grpo.async_grpo: null`, including the 128K ready-first configs.
