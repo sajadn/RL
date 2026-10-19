@@ -1,0 +1,6 @@
+# Double training and logprob microbatches; preserve the original 48K ready-first experiment.
+defaults: ar_grpo_superv3_exp544_step100_helpful_32k_ready_first.yaml
+
+policy:
+  train_micro_batch_size: 2
+  logprob_batch_size: 2
