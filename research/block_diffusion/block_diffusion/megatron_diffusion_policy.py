@@ -74,20 +74,8 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
         hf_config = AutoConfig.from_pretrained(
             config["model_name"], trust_remote_code=True
         )
-        if hf_config.model_type != "nemotron_labs_diffusion":
-            raise ValueError("Diffusion worker requires Nemotron Labs Diffusion")
-        if (
-            2 * config["max_total_sequence_length"]
-            > hf_config.rope_parameters["original_max_position_embeddings"]
-        ):
-            raise ValueError(
-                "Doubled diffusion context exceeds the unscaled position window"
-            )
+        self._configure_model(hf_config, config, block_size)
         register_allowed_target_prefix(type(hf_config).__module__ + ".")
-        config["megatron_cfg"]["model_overrides"] = {
-            "seq_length": config["max_total_sequence_length"],
-            "block_size": block_size,
-        }
         self.mask_token_id = mask_token_id
         super().__init__(
             config,
@@ -99,9 +87,7 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
             **kwargs,
         )
         # The native constructor creates the model before a processor can bind it.
-        self.prepare_microbatch_fn: DiffusionMicrobatchProcessor = (
-            DiffusionMicrobatchProcessor(model=self.model, mask_token_id=mask_token_id)
-        )
+        self.prepare_microbatch_fn = self._create_microbatch_processor()
         self.generation_vocab_size = hf_config.vocab_size
         self.mask_token_id = mask_token_id
         self.sampling = sampling
@@ -121,6 +107,41 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
                 self.positive_diffusion.seed + parallel_state.get_data_parallel_rank()
             )
 
+    def _configure_model(
+        self, hf_config: Any, config: PolicyConfig, block_size: int
+    ) -> None:
+        """Validate the model adapter and set the native model context."""
+        if hf_config.model_type != "nemotron_labs_diffusion":
+            raise ValueError("Diffusion worker requires Nemotron Labs Diffusion")
+        if (
+            2 * config["max_total_sequence_length"]
+            > hf_config.rope_parameters["original_max_position_embeddings"]
+        ):
+            raise ValueError(
+                "Doubled diffusion context exceeds the unscaled position window"
+            )
+        config["megatron_cfg"]["model_overrides"] = {
+            "seq_length": config["max_total_sequence_length"],
+            "block_size": block_size,
+        }
+
+    def _create_microbatch_processor(self) -> DiffusionMicrobatchProcessor:
+        return DiffusionMicrobatchProcessor(
+            model=self.model, mask_token_id=self.mask_token_id
+        )
+
+    def _build_positive_diffusion_level(
+        self, data: BatchedDataDict[Any]
+    ) -> tuple[BatchedDataDict[Any], torch.Tensor]:
+        return build_positive_diffusion_level(
+            data,
+            self.positive_diffusion,
+            pad_token_id=self.tokenizer.pad_token_id,
+            padded_width=self.cfg["max_total_sequence_length"],
+            stop_token_ids=self.cfg["generation"]["stop_token_ids"] or [],
+            generator=self.positive_diffusion_generator,
+        )
+
     def _streaming_loss_token_mask(self, data: BatchedDataDict[Any]) -> torch.Tensor:
         """Diffusion predicts every selected position, including column zero.
 
@@ -138,14 +159,7 @@ class MegatronDiffusionPolicyWorkerImpl(MegatronPolicyWorkerImpl):
         auxiliary sum is rescaled from that denominator to the count of all
         valid response tokens, matching the AR GRPO auxiliary loss.
         """
-        level, response_tokens = build_positive_diffusion_level(
-            data,
-            self.positive_diffusion,
-            pad_token_id=self.tokenizer.pad_token_id,
-            padded_width=self.cfg["max_total_sequence_length"],
-            stop_token_ids=self.cfg["generation"]["stop_token_ids"] or [],
-            generator=self.positive_diffusion_generator,
-        )
+        level, response_tokens = self._build_positive_diffusion_level(data)
         loss_fn = PositiveDiffusionLoss(self._auxiliary_config(response_tokens))
         # Score this level with untempered denoising CE, then restore the policy loss.
         saved = self.sampling_params, self.loss_postprocessor_factory

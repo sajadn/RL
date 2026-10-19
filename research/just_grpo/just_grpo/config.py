@@ -13,17 +13,19 @@
 # limitations under the License.
 """Configuration types and validation; experiment defaults live in YAML."""
 
+import re
 from typing import Self
-
-from omegaconf import DictConfig, OmegaConf
-from pydantic import Field, model_validator
 
 from block_diffusion.config import (
     BlockDiffusionConfig,
     DiffusionExperimentConfig,
+)
+from block_diffusion.config import (
     DiffusionSamplingParams as DiffusionSamplingParams,
 )
 from block_diffusion.validation import validate_experiment
+from omegaconf import DictConfig, OmegaConf
+from pydantic import Field, model_validator
 
 
 class ScheduleConfig(BlockDiffusionConfig, extra="allow"):
@@ -39,8 +41,10 @@ class ScheduleConfig(BlockDiffusionConfig, extra="allow"):
 class JustGRPOConfig(DiffusionExperimentConfig):
     """Diffusion-specific extension to the standard NeMo-RL configuration."""
 
+    generation_batch_size: int = Field(default=4, gt=0)
     training_token_fraction: float = Field(gt=0, le=1)
     schedule: ScheduleConfig
+    validation_modes: dict[str, DiffusionSamplingParams] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_training_distribution(self) -> Self:
@@ -57,7 +61,13 @@ class JustGRPOConfig(DiffusionExperimentConfig):
             raise ValueError("Generation steps must match the training reveal schedule")
         if self.training_token_fraction < 1 and s.reveal_tokens_per_step != 1:
             raise ValueError("Fast partial views require one token per reveal")
-        for params in (p, self.validation_sampling):
+        if self.validation_modes and self.runtime != "megatron_llada":
+            raise ValueError("Named LLaDA validation modes require megatron_llada")
+        if any(
+            not re.fullmatch(r"[A-Za-z0-9_-]+", name) for name in self.validation_modes
+        ):
+            raise ValueError("Validation mode names must be filename-safe identifiers")
+        for params in (p, self.validation_sampling, *self.validation_modes.values()):
             if (
                 params.returns_entropy
                 or params.returns_reveal_steps
@@ -66,10 +76,37 @@ class JustGRPOConfig(DiffusionExperimentConfig):
                 raise ValueError(
                     "Generation does not yet transport entropy/reveal channels"
                 )
-        if self.runtime not in ("reference_vllm", "megatron"):
+        if self.runtime not in (
+            "reference_vllm",
+            "megatron",
+            "megatron_llada",
+        ):
             raise ValueError(
                 "Upstream generation cannot yet replay leftmost reveals; use megatron or reference_vllm"
             )
+        if self.runtime == "megatron_llada":
+            if s.reveal_tokens_per_step != 1 or self.training_token_fraction != 1:
+                raise ValueError("LLaDA supports exact one-token JustGRPO replay only")
+            for v in (self.validation_sampling, *self.validation_modes.values()):
+                if (
+                    v.selection_policy not in ("low_confidence", "confidence_threshold")
+                    or not 1 <= v.max_steps <= v.block_size
+                    or v.block_size % v.max_steps
+                ):
+                    raise ValueError(
+                        "LLaDA evaluation requires confidence unmasking with at most one pass per canvas token"
+                    )
+                if (
+                    v.max_steps != v.block_size
+                    and v.selection_policy == "confidence_threshold"
+                ):
+                    raise ValueError(
+                        "Fixed parallel LLaDA evaluation requires low_confidence"
+                    )
+                if s.block_size % v.block_size:
+                    raise ValueError(
+                        "LLaDA canvas must contain complete validation blocks"
+                    )
         return self
 
 

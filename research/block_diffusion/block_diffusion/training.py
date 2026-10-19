@@ -25,10 +25,8 @@ from block_diffusion.generation.validation import (
     MultiModeValidation,
     validation_variants,
 )
-
 from nemo_rl.data.interfaces import LLMMessageLogType
 from nemo_rl.distributed.batched_data_dict import BatchedDataDict
-
 
 PrepareTrainingData = Callable[
     [BatchedDataDict[Any], list[LLMMessageLogType], int], None
@@ -39,7 +37,10 @@ def run(
     config: DictConfig,
     *,
     diffusion: DiffusionExperimentConfig | None = None,
+    evaluation_only: bool = False,
     generation_python: str | None = None,
+    generation_factory: Callable[..., Any] | None = None,
+    validation_fn: Callable[..., tuple[dict[str, Any], dict[str, Any]]] | None = None,
     prepare_training_data_factory: Callable[[list[int]], PrepareTrainingData]
     | None = None,
 ) -> None:
@@ -47,7 +48,10 @@ def run(
 
     Args:
         config: Validated upstream and research experiment settings.
+        evaluation_only: Run validation once without entering the training loop.
         diffusion: Parsed diffusion algorithm configuration; None selects causal AR.
+        generation_factory: Optional dedicated adapter or shared Megatron adapter.
+        validation_fn: Optional validator using the controller's validation timing.
         generation_python: Optional Python executable for the rollout and validation engines.
         prepare_training_data_factory: Optional algorithm callback factory, called
             with the tokenizer-resolved stop token IDs before training starts.
@@ -124,6 +128,8 @@ def run(
         if variants
         else None
     )
+    if validation is not None and validation_fn is not None:
+        raise ValueError("Custom validation cannot be combined with vLLM variants")
     setup_kwargs = (
         {
             "vllm_generation_factory": validation.create_generation,
@@ -132,6 +138,14 @@ def run(
         if validation is not None
         else {}
     )
+    if generation_factory is not None and (
+        diffusion is None or diffusion.runtime not in ("megatron", "megatron_llada")
+    ):
+        if validation is not None:
+            raise ValueError(
+                "Custom generation factories cannot use vLLM validation variants"
+            )
+        setup_kwargs["vllm_generation_factory"] = generation_factory
     logger = generation = None
     try:
         (
@@ -156,10 +170,16 @@ def run(
                 inference_cluster=clusters[1],
                 refit_buffer_size_gb=master.policy.get("refit_buffer_size_gb"),
             )
-        if diffusion is not None and diffusion.runtime == "megatron":
+        if diffusion is not None and diffusion.runtime in (
+            "megatron",
+            "megatron_llada",
+        ):
             # Colocated setup has not started an engine (HTTP serving is disabled).
             generation.shutdown()
-            generation = MegatronDiffusionGeneration(policy=policy, config=master)
+            shared_generation_factory = (
+                generation_factory or MegatronDiffusionGeneration
+            )
+            generation = shared_generation_factory(policy=policy, config=master)
             generation.weight_synchronizer = create_weight_synchronizer(
                 policy=policy,
                 generation=generation,
@@ -167,6 +187,25 @@ def run(
                 colocated=True,
             )
             generation.weight_synchronizer.init_communicator()
+        if evaluation_only:
+            if validation_fn is None:
+                raise ValueError("Evaluation-only execution requires a validator")
+            generation.prepare_for_generation()
+            try:
+                metrics, timings = validation_fn(
+                    generation,
+                    val_dataloader,
+                    tokenizer,
+                    val_environments,
+                    step=0,
+                    master_config=master,
+                    logger=logger,
+                )
+                logger.log_metrics(metrics, 0, prefix="validation")
+                logger.log_metrics(timings, 0, prefix="timing/validation")
+            finally:
+                generation.finish_generation()
+            return
         trainer = async_grpo_train if master.grpo.async_grpo.enabled else grpo_train
         trainer_kwargs = (
             {
@@ -177,6 +216,8 @@ def run(
         )
         if validation is not None:
             trainer_kwargs["validation_fn"] = validation
+        elif validation_fn is not None:
+            trainer_kwargs["validation_fn"] = validation_fn
         if logger.wandb_logger is not None:
             (output / "wandb_url.txt").write_text(logger.wandb_logger.run.url + "\n")
         if prepare_training_data_factory is not None:

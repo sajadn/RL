@@ -1,0 +1,26 @@
+# DP16: 8 prompts x 16 completions gives eight sequences per training rank.
+defaults: just_grpo-math-llada8b-canvas256-16n8g-megatron-inference-long.yaml
+
+grpo:
+  num_prompts_per_step: 8
+  num_generations_per_prompt: 16
+  max_num_steps: 3
+  max_val_samples: 16
+  val_batch_size: 16
+  val_period: 1
+
+just_grpo:
+  max_generation_kl: 0.1
+
+cluster:
+  num_nodes: 2
+
+checkpointing:
+  save_period: 1
+  checkpoint_must_save_by: "00:00:50:00"
+
+logger:
+  wandb_enabled: false
+  log_dir: ${oc.env:LOG_DIR,logs/llada_math_canvas256_smoke}
+  wandb:
+    name: ${oc.env:WANDB_RUN_NAME,llada_math_canvas256_smoke}

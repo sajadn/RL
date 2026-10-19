@@ -238,7 +238,14 @@ def validate_experiment(
     world_size = world
     if diffusion.distributed:
         data_parallel_size = world_size // p.megatron_cfg.tensor_model_parallel_size
-        if world_size < 1 or g.num_prompts_per_step % data_parallel_size:
+        if world_size < 1:
+            raise ValueError("Distributed training requires at least one policy GPU")
+        if diffusion.runtime == "megatron_llada":
+            if p.train_global_batch_size % data_parallel_size:
+                raise ValueError(
+                    "LLaDA requires complete completion shards per DP rank"
+                )
+        elif g.num_prompts_per_step % data_parallel_size:
             raise ValueError(
                 "Distributed runs require a whole prompt group per data-parallel rank"
             )
@@ -246,14 +253,35 @@ def validate_experiment(
             raise ValueError(
                 "Validation needs at least one puzzle per data-parallel rank"
             )
-    if diffusion.validation_sampling != diffusion.sampling:
+    if (
+        diffusion.runtime != "megatron_llada"
+        and diffusion.validation_sampling != diffusion.sampling
+    ):
         raise ValueError("Validation must use the training sampling settings")
     if g.max_val_samples < g.val_batch_size:
         raise ValueError("max_val_samples must include at least one val_batch_size")
-    expected_backend = "megatron" if diffusion.runtime == "megatron" else "vllm"
+    if diffusion.runtime == "megatron_llada":
+        if g.async_grpo.enabled or not p.generation.colocated.enabled:
+            raise ValueError(
+                "LLaDA shared workers require synchronous colocated generation"
+            )
+        if p.worker_extension_cls_fqn != (
+            "just_grpo.algorithms.llada_policy_worker.LLaDAJustGRPOPolicyWorker"
+        ):
+            raise ValueError("LLaDA requires the full-canvas policy worker")
+        if (
+            p.generation.stop_token_ids
+            or p.generation.max_new_tokens != diffusion.schedule.block_size
+        ):
+            raise ValueError(
+                "LLaDA must generate the complete canvas without early stopping"
+            )
+    expected_backend = (
+        "megatron" if diffusion.runtime in ("megatron", "megatron_llada") else "vllm"
+    )
     if p.generation.backend != expected_backend:
         raise ValueError("policy.generation.backend must match the diffusion runtime")
-    if diffusion.runtime == "megatron":
+    if diffusion.runtime in ("megatron", "megatron_llada"):
         if tp != 1:
             raise ValueError(
                 "In-process Megatron diffusion generation currently requires TP=1"

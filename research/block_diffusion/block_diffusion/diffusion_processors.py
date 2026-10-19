@@ -115,13 +115,18 @@ def selected_diffusion_logprobs(
     """
     targets = data["target_ids"]
     selected = data["token_mask"].bool()
-    noisy_logits = logits[:, : targets.shape[1]]
-    if not selected.any():
-        # Empty views must still participate in Megatron's backward schedule.
-        return noisy_logits[..., 0].float() * 0
+    width = min(logits.shape[1], targets.shape[1])
+    if selected[:, width:].any():
+        raise ValueError("Selected diffusion targets extend beyond model logits")
+    noisy_logits = logits[:, :width]
+    active = selected[:, :width]
+    if not active.any():
+        return torch.nn.functional.pad(
+            noisy_logits[..., 0].float() * 0, (0, targets.shape[1] - width)
+        )
     values = get_next_token_logprobs_from_logits(
-        input_ids=targets[selected].unsqueeze(0),
-        next_token_logits=noisy_logits[selected].float().unsqueeze(0),
+        input_ids=targets[:, :width][active].unsqueeze(0),
+        next_token_logits=noisy_logits[active].float().unsqueeze(0),
         vocab_parallel_rank=parallel_state.get_tensor_model_parallel_rank(),
         vocab_parallel_group=parallel_state.get_tensor_model_parallel_group(),
         shift_labels=False,

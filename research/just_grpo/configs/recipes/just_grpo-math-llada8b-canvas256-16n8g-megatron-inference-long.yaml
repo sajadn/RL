@@ -1,0 +1,59 @@
+# MATH training / MATH-500 validation; original LLaDA-8B-Instruct.
+# Data preparation matches JustGRPO's ankner/math-500 split and character filter.
+# Both phases share Megatron workers (DP128); 64 prompts x 16 samples, 125 updates.
+defaults: just_grpo-gsm8k-llada8b-canvas256-16n8g-megatron-inference-long.yaml
+
+grpo:
+  # Four batches include all 500 questions, including the final short batch.
+  max_val_samples: 512
+
+just_grpo:
+  # First mode supplies validation/accuracy and checkpoint ranking.
+  validation_modes:
+    fixed1_t0:
+      temperature: 0.0
+      block_size: 32
+      max_steps: 32
+      selection_policy: low_confidence
+      threshold: 0.9
+      returns_reveal_steps: false
+      returns_entropy: false
+    threshold09_t1:
+      temperature: 1.0
+      block_size: 32
+      max_steps: 32
+      selection_policy: confidence_threshold
+      threshold: 0.9
+      returns_reveal_steps: false
+      returns_entropy: false
+
+policy:
+  # Longest evaluation prompt is 851 tokens; preserve all 500 questions.
+  max_total_sequence_length: 1280
+
+data:
+  max_input_seq_length: 1024
+  train:
+    _override_: true
+    dataset_name: ResponseDataset
+    data_path: ${oc.env:LLADA_MATH_DATA_DIR}/train.jsonl
+    input_key: problem
+    output_key: answer
+    split: train
+  validation:
+    _override_: true
+    dataset_name: ResponseDataset
+    data_path: ${oc.env:LLADA_MATH_DATA_DIR}/test.jsonl
+    input_key: problem
+    output_key: answer
+    split: train
+
+checkpointing:
+  # Preserve the best three evaluated checkpoints plus the latest recovery point.
+  save_period: 10
+  ft_save_period: 1
+
+logger:
+  log_dir: ${oc.env:LOG_DIR,logs/llada_math256_justgrpo}
+  wandb:
+    name: ${oc.env:WANDB_RUN_NAME,llada_math256_justgrpo}

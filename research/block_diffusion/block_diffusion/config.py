@@ -47,7 +47,13 @@ class DiffusionExperimentConfig(BaseModel, extra="forbid"):
     """Backend and decoding settings shared by diffusion GRPO algorithms."""
 
     schedule: BlockDiffusionConfig
-    runtime: Literal["reference_vllm", "megatron", "upstream_vllm", "upstream_sglang"]
+    runtime: Literal[
+        "reference_vllm",
+        "megatron",
+        "upstream_vllm",
+        "upstream_sglang",
+        "megatron_llada",
+    ]
     generation_python: str | None
     max_generation_kl: float = Field(ge=0)
     distributed: bool

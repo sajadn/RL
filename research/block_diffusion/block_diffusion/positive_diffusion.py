@@ -19,6 +19,7 @@ import torch
 from pydantic import BaseModel, Field, model_validator
 
 from block_diffusion.block_layout import BlockDiffusionLayout
+from block_diffusion.full_canvas import FullCanvasLayout
 from nemo_rl.algorithms.loss.interfaces import LossInputType, LossType, MetricNormalizer
 from nemo_rl.distributed.batched_data_dict import BatchedDataDict
 
@@ -106,6 +107,7 @@ def build_positive_diffusion_level(
     padded_width: int,
     stop_token_ids: list[int],
     generator: torch.Generator,
+    layout: BlockDiffusionLayout | FullCanvasLayout | None = None,
 ) -> tuple[BatchedDataDict[Any], torch.Tensor]:
     """Render one uniformly masked level on a diffusion algorithm's canvas.
 
@@ -116,12 +118,13 @@ def build_positive_diffusion_level(
     Returns the level and the local count of scorable response tokens over all
     included completions, the denominator shared with the AR auxiliary loss.
     """
-    layout = BlockDiffusionLayout(
-        data,
-        block_size=config.block_size,
-        pad_token_id=pad_token_id,
-        padded_width=padded_width,
-    )
+    if layout is None:
+        layout = BlockDiffusionLayout(
+            data,
+            block_size=config.block_size,
+            pad_token_id=pad_token_id,
+            padded_width=padded_width,
+        )
     level = BatchedDataDict(layout.base)
     targets = level["target_ids"]
     scorable = (
@@ -136,14 +139,16 @@ def build_positive_diffusion_level(
         config.mask_probability_max - config.mask_probability_min
     ) * torch.rand(ids.shape[0], generator=generator)
     masked = (
-        torch.rand(targets.shape, generator=generator) < probabilities[:, None]
-    ).to(targets.device) & scorable & positive[:, None]
+        (torch.rand(targets.shape, generator=generator) < probabilities[:, None]).to(
+            targets.device
+        )
+        & scorable
+        & positive[:, None]
+    )
     level["masked_indices"] = layout.canvas_mask & (~scorable | masked)
     level["token_mask"] = masked
     level["sample_mask"] = data["sample_mask"]
-    level["input_lengths"] = torch.full_like(
-        level["sample_indices"], targets.shape[1]
-    )
+    level["input_lengths"] = torch.full_like(level["sample_indices"], targets.shape[1])
     level["diffusion_mask_probability"] = probabilities.to(targets.device)
     level["diffusion_positive_samples"] = positive
     return level, scorable.sum()

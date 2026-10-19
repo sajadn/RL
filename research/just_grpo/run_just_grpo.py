@@ -14,13 +14,13 @@
 """Run Block JustGRPO through the shared diffusion driver."""
 
 import argparse
+from functools import partial
 from pathlib import Path
 
-from omegaconf import DictConfig, OmegaConf
-
 from block_diffusion import training
+from just_grpo.algorithms.llada_schedule import make_llada_training_data_preparer
 from just_grpo.config import validate_config
-
+from omegaconf import DictConfig, OmegaConf
 
 from nemo_rl.utils.config import (
     load_config,
@@ -29,9 +29,27 @@ from nemo_rl.utils.config import (
 )
 
 
-def run(config: DictConfig) -> None:
+def run(config: DictConfig, *, evaluation_only: bool = False) -> None:
     """Validate JustGRPO settings and start the shared training loop."""
-    training.run(config, diffusion=validate_config(config))
+    diffusion = validate_config(config)
+    if diffusion.runtime == "megatron_llada":
+        # Load the optional LLaDA adapter only for its shared-worker runtime.
+        from just_grpo.generation.llada_generation import validate_llada
+        from just_grpo.generation.llada_megatron import LLaDAMegatronGeneration
+
+        training.run(
+            config,
+            diffusion=diffusion,
+            evaluation_only=evaluation_only,
+            generation_factory=LLaDAMegatronGeneration,
+            validation_fn=validate_llada,
+            prepare_training_data_factory=partial(
+                make_llada_training_data_preparer,
+                canvas_length=diffusion.schedule.block_size,
+            ),
+        )
+    else:
+        training.run(config, diffusion=diffusion, evaluation_only=evaluation_only)
 
 
 def main() -> None:
@@ -42,11 +60,14 @@ def main() -> None:
         default=Path(__file__).parent
         / "configs/recipes/just_grpo-sudoku6x6-4n8g-megatron-inference-long.yaml",
     )
+    parser.add_argument(
+        "--eval-only", action="store_true", help="Validate once without training"
+    )
     args, overrides = parser.parse_known_args()
     register_omegaconf_resolvers()
     config = parse_hydra_overrides(load_config(args.config), overrides)
     OmegaConf.resolve(config)
-    run(config)
+    run(config, evaluation_only=args.eval_only)
 
 
 if __name__ == "__main__":

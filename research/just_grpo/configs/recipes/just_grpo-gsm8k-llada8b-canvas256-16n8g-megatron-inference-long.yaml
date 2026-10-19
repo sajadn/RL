@@ -1,0 +1,189 @@
+# Original LLaDA-8B-Instruct: bidirectional 256-token full-canvas JustGRPO.
+# Synchronous generation and training share 16 nodes (DP128).
+defaults: ../../../../examples/configs/grpo_math_1B.yaml
+
+grpo:
+  seed: 1234
+  num_prompts_per_step: 64
+  num_generations_per_prompt: 16
+  max_num_steps: 125
+  max_num_epochs: 1000
+  normalize_rewards: true
+  use_leave_one_out_baseline: false
+  use_dynamic_sampling: false
+  overlong_filtering: false
+  skip_reference_policy_logprobs_calculation: true
+  val_at_start: true
+  val_at_end: true
+  val_period: 10
+  # Eleven batches cover all 1319 test examples, including the final short batch.
+  max_val_samples: 1408
+  val_batch_size: 128
+  async_grpo:
+    enabled: false
+
+loss_fn:
+  reference_policy_kl_penalty: 0.0
+  ratio_clip_min: 0.2
+  ratio_clip_max: 0.2
+  force_on_policy_ratio: false
+  use_importance_sampling_correction: true
+  truncated_importance_sampling_ratio: null
+  token_level_loss: true
+
+just_grpo:
+  distributed: true
+  runtime: megatron_llada
+  generation_python: null
+  max_generation_kl: .inf
+  generation_batch_size: 4
+  training_token_fraction: 1.0
+  schedule:
+    mask_token_id: 126336
+    block_size: 256
+    reveal_tokens_per_step: 1
+  sampling:
+    temperature: 1.0
+    block_size: ${just_grpo.schedule.block_size}
+    max_steps: ${just_grpo.schedule.block_size}
+    selection_policy: leftmost
+    threshold: 0.9
+    returns_reveal_steps: false
+    returns_entropy: false
+  validation_sampling:
+    temperature: 1.0
+    block_size: 32
+    max_steps: 32
+    selection_policy: low_confidence
+    threshold: 0.9
+    returns_reveal_steps: false
+    returns_entropy: false
+
+policy:
+  model_name: /lustre/fsw/portfolios/coreai/users/snorouzi/hf_home/hub/models--GSAI-ML--LLaDA-8B-Instruct/snapshots/08b83a6feb34df1a6011b80c3c00c7563e963b07
+  tokenizer:
+    name: ${policy.model_name}
+  worker_extension_cls_fqn: just_grpo.algorithms.llada_policy_worker.LLaDAJustGRPOPolicyWorker
+  precision: bfloat16
+  train_global_batch_size: ${mul:${grpo.num_prompts_per_step},${grpo.num_generations_per_prompt}}
+  train_micro_batch_size: 8
+  logprob_batch_size: 8
+  max_total_sequence_length: 1024
+  max_grad_norm: 1.0
+  dtensor_cfg:
+    enabled: false
+  dynamic_batching:
+    enabled: false
+  sequence_packing:
+    enabled: false
+  optimizer:
+    name: torch.optim.AdamW
+    kwargs:
+      lr: 5.0e-6
+      betas: [0.9, 0.999]
+      eps: 1.0e-8
+      weight_decay: 0.0
+  megatron_cfg:
+    enabled: true
+    activation_checkpointing: true
+    recompute_granularity: full
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    expert_model_parallel_size: 1
+    expert_tensor_parallel_size: 1
+    sequence_parallel: false
+    apply_rope_fusion: false
+    peft:
+      enabled: false
+    optimizer:
+      optimizer: adam
+      lr: ${policy.optimizer.kwargs.lr}
+      min_lr: ${policy.optimizer.kwargs.lr}
+      weight_decay: ${policy.optimizer.kwargs.weight_decay}
+      adam_beta1: 0.9
+      adam_beta2: 0.999
+      adam_eps: 1.0e-8
+      use_distributed_optimizer: true
+      use_precision_aware_optimizer: false
+    scheduler:
+      lr_decay_style: constant
+      lr_decay_iters: ${grpo.max_num_steps}
+      lr_warmup_iters: 0
+      lr_warmup_init: ${policy.optimizer.kwargs.lr}
+    distributed_data_parallel_config:
+      grad_reduce_in_fp32: true
+      overlap_grad_reduce: false
+      overlap_param_gather: false
+  generation:
+    backend: megatron
+    worker_extension_cls_fqn: null
+    refit_transport: mcore
+    refit_timeout_s: null
+    max_new_tokens: ${just_grpo.schedule.block_size}
+    temperature: 1.0
+    val_temperature: ${policy.generation.temperature}
+    top_p: 1.0
+    top_k: null
+    stop_token_ids: []
+    stop_strings: null
+    colocated:
+      enabled: true
+      resources:
+        num_nodes: null
+        gpus_per_node: null
+    mcore_generation_config:
+      expose_http_server: false
+      refit_backend: gloo
+      cuda_graph_impl: none
+      materialize_only_last_token_logits: false
+
+data:
+  _override_: true
+  shuffle: true
+  num_workers: 1
+  use_multiple_dataloader: false
+  max_input_seq_length: 768
+  train:
+    dataset_name: gsm8k
+    split: train
+  validation:
+    dataset_name: gsm8k
+    split: test
+  default:
+    prompt_file: research/just_grpo/configs/prompts/passthrough.txt
+    system_prompt_file: null
+    processor: math_hf_data_processor
+    env_name: math
+
+# GSM8K numeric answer verifier.
+env:
+  _override_: true
+  math:
+    num_workers: 8
+    math_verify_impl: hf_math_verify
+
+checkpointing:
+  enabled: true
+  checkpoint_dir: ${oc.env:CHECKPOINT_ROOT,${logger.log_dir}/checkpoints}
+  # Keep the best three validation checkpoints plus the latest recovery point.
+  metric_name: "val:accuracy"
+  higher_is_better: true
+  keep_top_k: 3
+  ft_keep_latest_k: 1
+  save_period: 1
+  checkpoint_must_save_by: "00:03:30:00"
+  save_optimizer: true
+  load_replay_buffer: true
+
+logger:
+  log_dir: ${oc.env:LOG_DIR,logs/llada256_justgrpo_megatron_shared}
+  wandb_enabled: true
+  tensorboard_enabled: true
+  wandb:
+    project: diffusion_rl
+    name: ${oc.env:WANDB_RUN_NAME,llada256_justgrpo_megatron_shared}
+
+cluster:
+  num_nodes: 16
+  gpus_per_node: 8
