@@ -16,12 +16,12 @@
 from typing import Any, Literal, Self
 
 import torch
+from block_diffusion.block_layout import BlockDiffusionLayout
+from block_diffusion.config import BlockDiffusionConfig, DiffusionExperimentConfig
+from block_diffusion.denoising_schedule import DenoisingSchedule
+from block_diffusion.replay import recorded_reveal_states
 from pydantic import Field, model_validator
 
-from block_diffusion.block_layout import BlockDiffusionLayout
-from block_diffusion.replay import recorded_reveal_states
-from block_diffusion.config import DiffusionExperimentConfig, BlockDiffusionConfig
-from block_diffusion.denoising_schedule import DenoisingSchedule
 from nemo_rl.distributed.batched_data_dict import BatchedDataDict
 
 
@@ -125,12 +125,15 @@ class TraceGRPO:
 
 
 class TraceGRPOSchedule(DenoisingSchedule):
-    """Render recorded contexts with a fixed, DP-uniform number of sampled views."""
+    """Replay prepared levels, loss masks, and weights for TraceGRPO or ForkGRPO.
+
+    The prepared view count survives DP slicing, including empty shards.
+    """
 
     def __init__(
         self,
         data: BatchedDataDict[Any],
-        config: TraceScheduleConfig,
+        config: BlockDiffusionConfig,
         *,
         pad_token_id: int,
         padded_width: int | None = None,
@@ -159,14 +162,19 @@ class TraceGRPOSchedule(DenoisingSchedule):
             data["trace_loss_mask"].gather(1, positions) & self.layout.response_mask
         )
         self.sampled = data["trace_sampled_levels"]
-        if self.sampled.shape != (data.size, config.num_level_samples):
+        if self.sampled.ndim != 2 or self.sampled.shape[0] != data.size:
+            raise ValueError("Selected levels must have shape [batch, views]")
+        if (
+            isinstance(config, TraceScheduleConfig)
+            and self.sampled.shape[1] != config.num_level_samples
+        ):
             raise ValueError("Sampled levels must match num_level_samples")
         self.weights = (
             data["trace_loss_weights"]
             if weighted_loss
             else torch.ones_like(data["trace_loss_weights"])
         )
-        super().__init__(num_steps=config.num_level_samples, num_samples=data.size)
+        super().__init__(num_steps=self.sampled.shape[1], num_samples=data.size)
 
     def generate_single_trajectory(self, time_step: int) -> BatchedDataDict[Any]:
         if not 0 <= time_step < self.num_steps:

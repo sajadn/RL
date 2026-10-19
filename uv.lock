@@ -67,6 +67,7 @@ members = [
     "ar-grpo",
     "block-diffusion",
     "d-opsd",
+    "fork-grpo",
     "just-grpo",
     "nemo-rl",
     "template-project",
@@ -2039,6 +2040,31 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/44/e2/632f4a8b94e6d7eea41e6d82f0ed337f64f5fb96f9910e2ac6b1689910e2/fonttools-4.64.0-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:8252f20108e557532f91d7d6dd9af87c16ed6fa930f65516aa480fa2cfed3363", size = 5492828, upload-time = "2026-08-31T15:43:14.288Z" },
     { url = "https://files.pythonhosted.org/packages/82/f8/7188153c4b265c899cd035de6a062677d51f67118a4ba640902bd9683e90/fonttools-4.64.0-py3-none-any.whl", hash = "sha256:4a05783ff54ce4c7a28f18e5772efdf63c219374bd9ffc55452182e1cef8be60", size = 1195327, upload-time = "2026-08-31T15:44:31.741Z" },
 ]
+
+[[package]]
+name = "fork-grpo"
+version = "0.1.0"
+source = { editable = "research/fork_grpo" }
+dependencies = [
+    { name = "block-diffusion" },
+    { name = "nemo-rl" },
+    { name = "trace-grpo" },
+]
+
+[package.dev-dependencies]
+test = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "block-diffusion", editable = "research/block_diffusion" },
+    { name = "nemo-rl", editable = "." },
+    { name = "trace-grpo", editable = "research/trace_grpo" },
+]
+
+[package.metadata.requires-dev]
+test = [{ name = "pytest", specifier = ">=7.0.0" }]
 
 [[package]]
 name = "frozenlist"

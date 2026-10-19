@@ -643,6 +643,10 @@ def generate_responses(
             assistant_message["reveal_steps"] = generation_outputs["reveal_steps"][
                 i, input_length:total_length
             ]
+        if "fallback_mask" in generation_outputs:
+            assistant_message["fallback_mask"] = generation_outputs["fallback_mask"][
+                i, input_length:total_length
+            ]
         if "routed_experts" in generation_outputs:
             routed_experts = generation_outputs["routed_experts"][i]
             prefix_length = _attach_routed_experts_to_message_log_prefix(
@@ -789,6 +793,10 @@ async def generate_responses_async(
             ]
         if "reveal_steps" in generation_outputs:
             assistant_message["reveal_steps"] = generation_outputs["reveal_steps"][
+                i, input_length:total_length
+            ]
+        if "fallback_mask" in generation_outputs:
+            assistant_message["fallback_mask"] = generation_outputs["fallback_mask"][
                 i, input_length:total_length
             ]
         if "routed_experts" in generation_outputs:

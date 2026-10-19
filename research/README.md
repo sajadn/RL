@@ -72,3 +72,5 @@ It should be noted that because we use `uv`, even if we must disable tests becau
 - **[just_grpo](just_grpo/)** - Block JustGRPO denoising schedules and a Sudoku verification recipe.
 
 - **[d_opsd](d_opsd/)** - On-policy self-distillation with a frozen future-conditioned teacher on block diffusion trajectories.
+
+- **[fork_grpo](fork_grpo/)** - Fork-dLLM parallel rollouts and fallback-only ForkGRPO training.

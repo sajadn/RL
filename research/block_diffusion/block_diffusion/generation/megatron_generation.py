@@ -145,11 +145,13 @@ def sample_batch(
     prepare_attention: Callable[[BatchedDataDict[Any]], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Decode original prompts with response-relative asymmetric block attention."""
-    if sampling.selection_policy not in ("leftmost", "confidence_threshold"):
+    if sampling.selection_policy not in ("leftmost", "confidence_threshold", "fork"):
         raise ValueError(
-            "Megatron generation supports leftmost or confidence_threshold selection"
+            "Megatron generation supports leftmost, confidence_threshold, or fork selection"
         )
     block = sampling.block_size
+    if sampling.selection_policy == "fork" and sampling.max_steps < block:
+        raise ValueError("Fork decoding requires max_steps >= block_size")
     if prompts.ndim != 2 or prompts.shape[1] == 0:
         raise ValueError("Require nonempty prompts")
     if max_new_tokens <= 0 or max_new_tokens % block:
@@ -204,6 +206,7 @@ def sample_batch(
     reveal_steps = torch.full(
         (batch, max_new_tokens), -1, device=prompts.device, dtype=torch.long
     )
+    fallback_mask = torch.zeros_like(reveal_steps, dtype=torch.bool)
     finished = torch.zeros(batch, device=prompts.device, dtype=torch.bool)
     lengths = torch.full(
         (batch,), max_new_tokens, device=prompts.device, dtype=torch.long
@@ -234,8 +237,20 @@ def sample_batch(
                 temperature=sampling.temperature,
                 generator=generator,
             )
-            del logits
             selection = eligible[:, lo:hi]
+            if sampling.selection_policy == "fork":
+                # Threshold the untempered probability of the sampled token,
+                # while retaining temperature-scaled logprobs for policy replay.
+                confidence = logits[:, block_start:block_end].float().softmax(-1)
+                confidence = confidence.gather(-1, candidates[..., None]).squeeze(-1)
+                take = (confidence > sampling.threshold) & selection
+                fallback = selection.any(-1) & ~take.any(-1)
+                leftmost = selection.long().argmax(-1, keepdim=True)
+                fallback_selection = torch.zeros_like(selection)
+                fallback_selection.scatter_(1, leftmost, fallback[:, None])
+                selection = take | fallback_selection
+                fallback_mask[:, block_start:block_end] |= fallback_selection
+            del logits
             if (
                 sampling.selection_policy == "confidence_threshold"
                 and step + 1 < sampling.max_steps
@@ -279,6 +294,8 @@ def sample_batch(
             "logprobs": scores[row, :length].tolist(),
             "finish_reason": "stop" if bool(finished[row]) else "length",
         }
+        if sampling.selection_policy == "fork":
+            response["fallback_mask"] = fallback_mask[row, :length].tolist()
         if sampling.returns_reveal_steps:
             response["reveal_steps"] = reveal_steps[row, :length].tolist()
             response["response_length"] = int(lengths[row])
@@ -376,4 +393,12 @@ def pack_responses(
             semantic_lengths.append(response["response_length"])
         result["reveal_steps"] = steps
         result["response_lengths"] = torch.tensor(semantic_lengths)
+    if any("fallback_mask" in response for response in responses):
+        fallback = torch.zeros_like(ids, dtype=torch.bool)
+        for i, (prompt, response) in enumerate(zip(prompts, responses)):
+            recorded = response["fallback_mask"]
+            if len(recorded) != len(response["token_ids"]):
+                raise ValueError("Fallback mask must align with generated tokens")
+            fallback[i, len(prompt) : lengths[i]] = torch.tensor(recorded)
+        result["fallback_mask"] = fallback
     return result

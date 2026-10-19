@@ -3,7 +3,9 @@
 `run_trace_grpo.py` runs recorded-trajectory GRPO through the same upstream
 controller and shared Megatron diffusion worker. The Trace algorithm and schedule
 live in `trace_grpo/algorithm.py`; its policy worker supplies only
-configuration and schedule construction.
+configuration and schedule construction. ForkGRPO directly uses
+`TraceGRPOSchedule` too, supplying fallback levels, loss masks, and weights
+during its own data preparation.
 
 Use `trace_grpo.schedule.num_level_samples=1` for one sampled-level training
 forward/backward per microbatch. Previous-policy and reference scoring each still

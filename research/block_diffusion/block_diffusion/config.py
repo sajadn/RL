@@ -25,6 +25,7 @@ class DiffusionSamplingParams(BaseModel, extra="allow"):
     selection_policy: Literal[
         "leftmost",
         "confidence_threshold",
+        "fork",
         "random",
         "entropy",
         "entropy_budget",

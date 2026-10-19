@@ -393,6 +393,7 @@ class GenerationOutputSpec(TypedDict):
     reveal_steps: NotRequired[
         torch.Tensor
     ]  # [N,S] block-relative commit steps; -1 outside committed tokens.
+    fallback_mask: NotRequired[torch.Tensor]  # [N,S] tokens committed by Fork fallback.
     response_lengths: NotRequired[
         torch.Tensor
     ]  # [N] semantic response length, excluding retained terminal-block context.

@@ -353,6 +353,7 @@ members = [
   "research/ar_grpo",
   "research/block_diffusion",
   "research/d_opsd",
+  "research/fork_grpo",
   "research/just_grpo",
   "research/trace_grpo",
 ]

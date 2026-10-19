@@ -1541,3 +1541,20 @@ def test_partitioned_token_masks_normalize_once_across_levels(
     worker.model.scale_gradients.assert_called_once_with(1 / selected_tokens)
     worker.optimizer.step.assert_called_once()
     worker.scheduler.step.assert_called_once()
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_empty_token_loss_skips_optimizer_and_scheduler(mock_module_symbols, empty):
+    """Empty Fork batches must not apply Adam momentum or weight decay."""
+    from nemo_rl.algorithms.loss.interfaces import LossType
+
+    worker = _make_worker(LossType.TOKEN_LEVEL)
+    worker.begin_train_step(loss_fn=worker._test_loss_fn)
+    data = _fake_batch()
+    if empty:
+        data["token_mask"].zero_()
+    worker.train_microbatch(data)
+    worker.finish_train_step()
+    assert worker.optimizer.step.call_count == int(not empty)
+    assert worker.scheduler.step.call_count == int(not empty)
+    assert worker._train_step_state is None

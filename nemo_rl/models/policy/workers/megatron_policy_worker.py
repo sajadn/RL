@@ -1955,7 +1955,10 @@ class MegatronPolicyWorkerImpl(
 
         # opt.step clips internally (clip_grad config); operates on the
         # already-rescaled grad. Returns (success, grad_norm, num_zeros).
-        update_successful, grad_norm, num_zeros_in_grad = self.optimizer.step()
+        if n_true.item() > 0:
+            update_successful, grad_norm, num_zeros_in_grad = self.optimizer.step()
+        else:
+            update_successful, grad_norm, num_zeros_in_grad = False, 0.0, 0
         mtp_grad_norm = (
             self.optimizer.grad_norms_by_group.get("mtp")
             if state["mtp_enabled"]
@@ -2021,7 +2024,8 @@ class MegatronPolicyWorkerImpl(
         curr_wd = self.scheduler.get_wd()
 
         # Scheduler increment matches sync path's ``increment=gbs``.
-        self.scheduler.step(increment=state["gbs"])
+        if n_true.item() > 0:
+            self.scheduler.step(increment=state["gbs"])
 
         # Per-mb metrics were computed with global_valid_*=1 (raw sums);
         # rescale to match what the sync path produces. Different metrics

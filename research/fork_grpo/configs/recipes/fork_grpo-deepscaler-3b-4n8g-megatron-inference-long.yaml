@@ -1,0 +1,135 @@
+# Fork-dLLM / ForkGRPO: Nemotron-3B, DeepScaleR train / AIME2024 validation.
+# Colocated Megatron training and inference; EXPANDABLE_SEGMENTS=false.
+defaults: ../../../../examples/configs/grpo_math_1B.yaml
+
+grpo:
+  num_prompts_per_step: 128
+  num_generations_per_prompt: 8
+  max_num_steps: 100
+  max_num_epochs: 1000
+  normalize_rewards: true
+  seq_logprob_error_threshold: null
+  skip_reference_policy_logprobs_calculation: true
+  val_at_start: true
+  val_at_end: true
+  val_period: 10
+  max_val_samples: 480
+  val_batch_size: 32
+
+loss_fn:
+  reference_policy_kl_penalty: 0.0
+  use_importance_sampling_correction: true
+  truncated_importance_sampling_type: tis
+  truncated_importance_sampling_ratio: 2.0
+
+policy:
+  model_name: nvidia/Nemotron-Labs-Diffusion-3B
+  worker_extension_cls_fqn: fork_grpo.policy_worker.ForkGRPOPolicyWorker
+  train_global_batch_size: ${mul:${grpo.num_prompts_per_step},${grpo.num_generations_per_prompt}}
+  train_micro_batch_size: 1
+  logprob_batch_size: 1
+  max_total_sequence_length: 4096
+  dtensor_cfg:
+    enabled: false
+  sequence_packing:
+    enabled: false
+  optimizer:
+    kwargs:
+      lr: 1.0e-6
+      fused: true
+  megatron_cfg:
+    enabled: true
+    activation_checkpointing: true
+    recompute_granularity: full
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    optimizer:
+      lr: ${policy.optimizer.kwargs.lr}
+      min_lr: ${policy.optimizer.kwargs.lr}
+      weight_decay: ${policy.optimizer.kwargs.weight_decay}
+      use_precision_aware_optimizer: false
+    scheduler:
+      lr_decay_iters: ${grpo.max_num_steps}
+      lr_warmup_init: ${mul:${policy.optimizer.kwargs.lr},0.1}
+    distributed_data_parallel_config:
+      grad_reduce_in_fp32: true
+      overlap_grad_reduce: false
+      overlap_param_gather: false
+    defer_fp32_logits: true
+  generation:
+    backend: megatron
+    refit_transport: mcore
+    max_new_tokens: 3744
+    temperature: 0.6
+    stop_token_ids: [11]
+    mcore_generation_config:
+      refit_backend: gloo
+      cuda_graph_impl: none
+      materialize_only_last_token_logits: false
+
+fork_grpo:
+  distributed: true
+  runtime: megatron
+  generation_python: null
+  max_generation_kl: 0.05
+  schedule:
+    mask_token_id: 100
+    block_size: 16
+  sampling:
+    temperature: ${policy.generation.temperature}
+    block_size: ${fork_grpo.schedule.block_size}
+    max_steps: 16
+    selection_policy: fork
+    threshold: 0.9
+    returns_reveal_steps: true
+    returns_entropy: false
+    emit_full_blocks: true
+  validation_sampling:
+    temperature: ${policy.generation.val_temperature}
+    block_size: ${fork_grpo.sampling.block_size}
+    max_steps: ${fork_grpo.sampling.max_steps}
+    selection_policy: ${fork_grpo.sampling.selection_policy}
+    threshold: ${fork_grpo.sampling.threshold}
+    returns_reveal_steps: ${fork_grpo.sampling.returns_reveal_steps}
+    returns_entropy: ${fork_grpo.sampling.returns_entropy}
+    emit_full_blocks: ${fork_grpo.sampling.emit_full_blocks}
+
+data:
+  _override_: true
+  shuffle: true
+  num_workers: 1
+  use_multiple_dataloader: false
+  max_input_seq_length: 350
+  train:
+    dataset_name: DeepScaler
+  validation:
+    dataset_name: AIME2024
+    repeat: 16
+  default:
+    prompt_file: examples/prompts/cot.txt
+    system_prompt_file: null
+    processor: math_hf_data_processor
+    env_name: math
+
+env:
+  _override_: true
+  math:
+    num_workers: 8
+    math_verify_impl: hf_math_verify
+
+checkpointing:
+  enabled: false
+
+logger:
+  log_dir: ${oc.env:LOG_DIR,results/fork_grpo_deepscaler_3b}
+  monitor_gpus: false
+  wandb_enabled: true
+  tensorboard_enabled: true
+  wandb:
+    project: diffusion_rl
+    name: ${oc.env:WANDB_RUN_NAME,fork_grpo_deepscaler_3b}
+
+cluster:
+  num_nodes: 4
+  gpus_per_node: 8
