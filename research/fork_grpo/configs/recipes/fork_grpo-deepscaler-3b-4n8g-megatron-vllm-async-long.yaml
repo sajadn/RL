@@ -1,8 +1,11 @@
 # Fork-dLLM / ForkGRPO: Nemotron-3B, DeepScaleR train / AIME2024 validation.
-# Colocated Megatron training and inference; EXPANDABLE_SEGMENTS=false.
+# Megatron training and asynchronous vLLM generation; EXPANDABLE_SEGMENTS=false.
 defaults: ../../../../examples/configs/grpo_math_1B.yaml
 
 grpo:
+  async_grpo:
+    enabled: true
+    recompute_kv_cache_after_weight_updates: true
   num_prompts_per_step: 128
   num_generations_per_prompt: 8
   max_num_steps: 100
@@ -26,8 +29,8 @@ policy:
   model_name: nvidia/Nemotron-Labs-Diffusion-3B
   worker_extension_cls_fqn: fork_grpo.policy_worker.ForkGRPOPolicyWorker
   train_global_batch_size: ${mul:${grpo.num_prompts_per_step},${grpo.num_generations_per_prompt}}
-  train_micro_batch_size: 1
-  logprob_batch_size: 1
+  train_micro_batch_size: 2
+  logprob_batch_size: 4
   max_total_sequence_length: 4096
   dtensor_cfg:
     enabled: false
@@ -58,20 +61,47 @@ policy:
       overlap_param_gather: false
     defer_fp32_logits: true
   generation:
-    backend: megatron
-    refit_transport: mcore
+    backend: vllm
+    refit_transport: null
+    worker_extension_cls_fqn: block_diffusion.generation.reference_vllm.ReferenceVllmAsyncWorker
+    colocated:
+      enabled: false
+      resources:
+        num_nodes: 2
+        gpus_per_node: 8
     max_new_tokens: 3744
     temperature: 0.6
     stop_token_ids: [11]
-    mcore_generation_config:
-      refit_backend: gloo
-      cuda_graph_impl: none
-      materialize_only_last_token_logits: false
+    vllm_cfg:
+      async_engine: true
+      tensor_parallel_size: 1
+      pipeline_parallel_size: 1
+      gpu_memory_utilization: 0.55
+      max_model_len: 4160
+      enforce_eager: true
+    vllm_kwargs:
+      hf_overrides:
+        architectures: [NemotronLabsDiffusionModel]
+      block_size: 16
+      attention_config:
+        backend: TRITON_ATTN
+      kernel_config:
+        enable_flashinfer_autotune: false
+      max_num_seqs: 64
+      diffusion_config:
+        canvas_length: ${fork_grpo.sampling.block_size}
+        max_denoising_steps: ${fork_grpo.sampling.max_steps}
+        temperature: ${fork_grpo.sampling.temperature}
+        selection_policy: ${fork_grpo.sampling.selection_policy}
+        confidence_threshold: ${fork_grpo.sampling.threshold}
+        return_entropy: ${fork_grpo.sampling.returns_entropy}
+        return_reveal_steps: ${fork_grpo.sampling.returns_reveal_steps}
+        emit_full_blocks: ${fork_grpo.sampling.emit_full_blocks}
 
 fork_grpo:
   distributed: true
-  runtime: megatron
-  generation_python: null
+  runtime: reference_vllm
+  generation_python: ${oc.env:NRL_VLLM_PY_EXECUTABLE,null}
   max_generation_kl: 0.05
   schedule:
     mask_token_id: 100
@@ -80,7 +110,7 @@ fork_grpo:
     temperature: ${policy.generation.temperature}
     block_size: ${fork_grpo.schedule.block_size}
     max_steps: 16
-    selection_policy: fork
+    selection_policy: confidence_threshold_leftmost
     threshold: 0.9
     returns_reveal_steps: true
     returns_entropy: false

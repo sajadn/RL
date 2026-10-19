@@ -169,7 +169,10 @@ def validate_experiment(
             raise ValueError("Async vLLM requires dedicated generation GPUs")
         if g.async_grpo.in_flight_weight_updates:
             raise ValueError("Shared-policy inference must drain before weight updates")
-        if g.async_grpo.recompute_kv_cache_after_weight_updates:
+        if (
+            diffusion.runtime == "megatron"
+            and g.async_grpo.recompute_kv_cache_after_weight_updates
+        ):
             raise ValueError(
                 "Uncached diffusion inference has no KV cache to recompute"
             )

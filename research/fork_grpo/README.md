@@ -36,9 +36,11 @@ uv run --all-packages --extra mcore python research/fork_grpo/run_fork_grpo.py \
 
 The single recipe trains Nemotron-3B on DeepScaleR and validates on AIME2024,
 using four nodes, 4K context, and 100 optimizer steps. It is an implementation baseline, not a reproduction
-of the paper's LLaDA LoRA results. Only the in-repository Megatron generation
-backend is supported. The separate vLLM fallback decoder does not yet transport
-fallback metadata into this training path. Training uses the shared upstream GRPO controller and
+of the paper's LLaDA LoRA results. The recipe uses two training nodes and two
+asynchronous vLLM generation nodes, with training microbatch 2 and logprob batch 4.
+Set `NRL_VLLM_PY_EXECUTABLE` to the reference fork interpreter with explicit
+`fallback_mask` output support. Megatron generation is also supported with
+`runtime: megatron` and `selection_policy: fork`. Training uses the shared GRPO controller and
 Megatron diffusion worker. The recipe disables the reference KL penalty.
 `max_steps >= block_size` prevents forced parallel final-step commits.
 

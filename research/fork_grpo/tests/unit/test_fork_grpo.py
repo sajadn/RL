@@ -217,18 +217,20 @@ def test_recipe_and_invalid_backend() -> None:
     register_omegaconf_resolvers()
     recipe = (
         Path(__file__).parents[2]
-        / "configs/recipes/fork_grpo-deepscaler-3b-4n8g-megatron-inference-long.yaml"
+        / "configs/recipes/fork_grpo-deepscaler-3b-4n8g-megatron-vllm-async-long.yaml"
     )
     loaded = load_config(recipe)
     validate_config(loaded)
+    # Prefix KV from the previous weights must not survive an async refit.
+    assert loaded.grpo.async_grpo.recompute_kv_cache_after_weight_updates
     assert loaded.data.train.dataset_name == "DeepScaler"
     assert loaded.data.validation.dataset_name == "AIME2024"
     assert loaded.data.default.env_name == "math"
     assert set(loaded.env) == {"math"}
     assert list(recipe.parent.glob("*.yaml")) == [recipe]
     bad = config().model_dump()
-    bad["runtime"] = "reference_vllm"
-    with pytest.raises(ValueError, match="Megatron generation"):
+    bad["runtime"] = "upstream_vllm"
+    with pytest.raises(ValueError, match="reference vLLM generation"):
         ForkGRPOConfig.model_validate(bad)
     bad = config().model_dump()
     bad["sampling"]["max_steps"] = 1

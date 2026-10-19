@@ -49,7 +49,7 @@ def main() -> None:
         "--config",
         type=Path,
         default=Path(__file__).parent
-        / "configs/recipes/fork_grpo-deepscaler-3b-4n8g-megatron-inference-long.yaml",
+        / "configs/recipes/fork_grpo-deepscaler-3b-4n8g-megatron-vllm-async-long.yaml",
     )
     args, overrides = parser.parse_known_args()
     register_omegaconf_resolvers()

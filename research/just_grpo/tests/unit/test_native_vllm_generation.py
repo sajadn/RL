@@ -157,3 +157,33 @@ def test_reference_trace_metadata_retains_full_canvas_and_text_stop(worker_cls):
     completion.reveal_steps = None
     with pytest.raises(ValueError, match="reveal step"):
         worker._completion_metadata(completion, input_length=4, padded_length=10)
+
+
+@pytest.mark.parametrize(
+    "worker_cls", [ReferenceVllmWorkerImpl, ReferenceVllmAsyncWorkerImpl]
+)
+@pytest.mark.parametrize("flags", [[False] * 4, [True, False, True, False]])
+def test_reference_fork_metadata_preserves_false_flags_and_terminal_canvas(
+    worker_cls, flags
+):
+    worker = object.__new__(worker_cls)
+    worker.cfg = {
+        "vllm_kwargs": {
+            "diffusion_config": {
+                "return_reveal_steps": True,
+                "selection_policy": "confidence_threshold_leftmost",
+            }
+        },
+        "stop_token_ids": [11],
+    }
+    completion = SimpleNamespace(
+        token_ids=[7, 11, 9, 8], reveal_steps=[1, 2, 0, 0], fallback_mask=flags
+    )
+    result = worker._completion_metadata(completion, input_length=2, padded_length=8)
+    assert result["fallback_mask"].dtype == torch.bool
+    assert result["fallback_mask"].tolist() == [False, False, *flags, False, False]
+    assert int(result["response_lengths"]) == 2
+    for invalid in (None, [], flags[:-1]):
+        completion.fallback_mask = invalid
+        with pytest.raises(ValueError, match="fallback flag"):
+            worker._completion_metadata(completion, input_length=2, padded_length=8)

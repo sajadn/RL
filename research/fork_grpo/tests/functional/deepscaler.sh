@@ -18,10 +18,12 @@ project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 : "${OUTPUT_DIR:?Set a fresh OUTPUT_DIR}"
 export PYTHONPATH="${project_dir}/../..:${project_dir}:${project_dir}/../block_diffusion:${project_dir}/../trace_grpo${PYTHONPATH:+:${PYTHONPATH}}"
 uv run --directory "${project_dir}/../.." --all-packages --extra mcore python "${project_dir}/run_fork_grpo.py" \
-  --config "${CONFIG:-${project_dir}/configs/recipes/fork_grpo-deepscaler-3b-4n8g-megatron-inference-long.yaml}" \
+  --config "${CONFIG:-${project_dir}/configs/recipes/fork_grpo-deepscaler-3b-4n8g-megatron-vllm-async-long.yaml}" \
   "policy.model_name=${MODEL}" "logger.log_dir=${OUTPUT_DIR}" \
   logger.tensorboard_enabled=true \
   cluster.num_nodes=1 cluster.gpus_per_node=2 \
+  policy.generation.colocated.resources.num_nodes=null \
+  policy.generation.colocated.resources.gpus_per_node=1 \
   grpo.num_prompts_per_step=2 grpo.num_generations_per_prompt=4 \
   grpo.max_num_steps=3 grpo.max_val_samples=2 grpo.val_batch_size=2 \
   grpo.val_period=-1 grpo.val_at_start=true grpo.val_at_end=true \

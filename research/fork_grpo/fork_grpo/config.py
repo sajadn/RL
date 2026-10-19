@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Validate ForkGRPO and shared Megatron runtime settings."""
+"""Validate ForkGRPO and shared diffusion runtime settings."""
 
 from block_diffusion.validation import validate_experiment
 from omegaconf import DictConfig, OmegaConf

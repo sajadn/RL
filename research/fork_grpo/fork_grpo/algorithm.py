@@ -26,13 +26,16 @@ from nemo_rl.distributed.batched_data_dict import BatchedDataDict
 class ForkGRPOConfig(DiffusionExperimentConfig):
     @model_validator(mode="after")
     def validate_fork(self) -> Self:
-        if self.runtime != "megatron":
-            raise ValueError("ForkGRPO currently requires Megatron generation")
+        if self.runtime not in {"megatron", "reference_vllm"}:
+            raise ValueError("ForkGRPO requires Megatron or reference vLLM generation")
+        selection_policy = (
+            "fork" if self.runtime == "megatron" else "confidence_threshold_leftmost"
+        )
         if self.sampling.temperature <= 0:
             raise ValueError("Training temperature must be positive")
         for sampling in (self.sampling, self.validation_sampling):
-            if sampling.selection_policy != "fork":
-                raise ValueError("ForkGRPO requires the fork sampling policy")
+            if sampling.selection_policy != selection_policy:
+                raise ValueError(f"ForkGRPO requires {selection_policy} sampling")
             if sampling.block_size != self.schedule.block_size:
                 raise ValueError("Fork sampling and training block sizes must match")
             if sampling.max_steps < sampling.block_size:

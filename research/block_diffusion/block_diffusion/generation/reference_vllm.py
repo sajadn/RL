@@ -64,6 +64,14 @@ class _ReferenceDiffusionSampling:
             raise RuntimeError(
                 "Reference vLLM must support leftmost diffusion sampling"
             )
+        if (
+            llm_kwargs["diffusion_config"].get("selection_policy")
+            == "confidence_threshold_leftmost"
+        ):
+            from vllm.outputs import CompletionOutput
+
+            if "fallback_mask" not in CompletionOutput.__annotations__:
+                raise RuntimeError("Reference vLLM must return fallback_mask metadata")
         super()._create_engine(llm_kwargs)
 
     def _build_sampling_params(
@@ -108,10 +116,22 @@ class _ReferenceDiffusionSampling:
         response_length = next(
             (i + 1 for i, token in enumerate(tokens) if token in stop_ids), len(tokens)
         )
-        return {
+        metadata = {
             "reveal_steps": steps,
             "response_lengths": torch.tensor(response_length),
         }
+        if diffusion.get("selection_policy") == "confidence_threshold_leftmost":
+            flags = completion.fallback_mask
+            if flags is None or len(flags) != len(tokens):
+                raise ValueError(
+                    "Reference vLLM must return a fallback flag per generated token"
+                )
+            fallback = torch.zeros(padded_length, dtype=torch.bool)
+            fallback[input_length : input_length + len(flags)] = torch.tensor(
+                flags, dtype=torch.bool
+            )
+            metadata["fallback_mask"] = fallback
+        return metadata
 
     def _validate_context(self, data: BatchedDataDict[GenerationDatumSpec]) -> None:
         diffusion = self.cfg["vllm_kwargs"]["diffusion_config"]
