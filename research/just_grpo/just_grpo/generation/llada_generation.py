@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from matplotlib.figure import Figure
+
 
 if TYPE_CHECKING:
     from just_grpo.generation.llada_megatron import LLaDAMegatronGeneration
@@ -104,4 +106,29 @@ def validate_llada(
     finally:
         if modes:
             val_dataloader.load_state_dict(loader_state)
+    if modes:
+        # Plot only complete comparisons, after restoring the training decoder/data.
+        rows = [
+            [name, metrics[f"mean_forward_passes/{name}"], metrics[f"accuracy/{name}"]]
+            for name in modes
+        ]
+        figure = Figure(figsize=(7, 4.5), layout="constrained")
+        axes = figure.subplots()
+        for name, nfe, accuracy in rows:
+            axes.scatter(nfe, accuracy, label=name)
+        axes.set_xlabel("NFE per response (mean forward passes)")
+        axes.set_ylabel("Validation accuracy")
+        axes.set_ylim(0, 1)
+        axes.set_title(f"Accuracy vs. NFE — step {step}")
+        axes.grid(alpha=0.25)
+        axes.legend()
+        figure.savefig(output / f"accuracy_vs_nfe_step{step}.png", dpi=160)
+        if logger is not None:
+            logger.log_table(
+                ["mode", "nfe", "accuracy"],
+                rows,
+                step,
+                "validation/accuracy_vs_nfe_data",
+            )
+            logger.log_plot(figure, step, "validation/accuracy_vs_nfe")
     return metrics, timings

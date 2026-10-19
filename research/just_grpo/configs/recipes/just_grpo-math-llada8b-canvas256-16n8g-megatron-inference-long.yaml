@@ -7,26 +7,6 @@ grpo:
   # Four batches include all 500 questions, including the final short batch.
   max_val_samples: 512
 
-just_grpo:
-  # First mode supplies validation/accuracy and checkpoint ranking.
-  validation_modes:
-    fixed1_t0:
-      temperature: 0.0
-      block_size: 32
-      max_steps: 32
-      selection_policy: low_confidence
-      threshold: 0.9
-      returns_reveal_steps: false
-      returns_entropy: false
-    threshold09_t1:
-      temperature: 1.0
-      block_size: 32
-      max_steps: 32
-      selection_policy: confidence_threshold
-      threshold: 0.9
-      returns_reveal_steps: false
-      returns_entropy: false
-
 policy:
   # Longest evaluation prompt is 851 tokens; preserve all 500 questions.
   max_total_sequence_length: 1280

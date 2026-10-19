@@ -257,6 +257,7 @@ def test_offline_threshold_overrides(monkeypatch):
         / "configs/recipes/just_grpo-gsm8k-llada8b-canvas256-16n8g-megatron-inference-long.yaml"
     )
     config = load_config(recipe)
+    config.just_grpo.validation_modes = {}
     config.just_grpo.validation_sampling.selection_policy = "confidence_threshold"
     config.policy.pretrained_checkpoint = {
         "path": "/snapshot/policy/weights",
@@ -360,6 +361,7 @@ def test_offline_fixed_two_overrides(monkeypatch):
         / "configs/recipes/just_grpo-gsm8k-llada8b-canvas256-16n8g-megatron-inference-long.yaml"
     )
     config = load_config(recipe)
+    config.just_grpo.validation_modes = {}
     config.just_grpo.validation_sampling.max_steps = 16
     diffusion = validate_config(config)
     assert diffusion.validation_sampling.selection_policy == "low_confidence"
@@ -373,7 +375,8 @@ def test_offline_fixed_two_overrides(monkeypatch):
 
 @pytest.mark.parametrize("auxiliary", [False, True])
 @pytest.mark.parametrize("smoke", [False, True])
-def test_math_recipes_validate_both_decoders(monkeypatch, auxiliary, smoke):
+@pytest.mark.parametrize("dataset", ["gsm8k", "math"])
+def test_recipes_validate_four_decoders(monkeypatch, auxiliary, smoke, dataset):
     register_omegaconf_resolvers()
     monkeypatch.setenv("LLADA_MATH_DATA_DIR", "/data")
     stem = "2n8g-megatron-inference-smoke" if smoke else "16n8g-megatron-inference-long"
@@ -381,35 +384,36 @@ def test_math_recipes_validate_both_decoders(monkeypatch, auxiliary, smoke):
     recipe = (
         Path(__file__).resolve().parents[2]
         / "configs/recipes"
-        / ("just_grpo-math-llada8b-canvas256-" + stem + suffix + ".yaml")
+        / (f"just_grpo-{dataset}-llada8b-canvas256-" + stem + suffix + ".yaml")
     )
     config = load_config(recipe)
     diffusion = validate_config(config)
-    assert list(diffusion.validation_modes) == ["fixed1_t0", "threshold09_t1"]
-    # The generic GRPO setup guard runs before LLaDA takes over sampling.
-    assert (
-        config.policy.generation.val_temperature == config.policy.generation.temperature
-    )
-    assert (
-        diffusion.validation_sampling.temperature
-        == config.policy.generation.temperature
-    )
-    fixed, threshold = diffusion.validation_modes.values()
-    assert fixed.temperature == 0
+    assert list(diffusion.validation_modes) == [
+        "fixed1_t1",
+        "threshold09_t1",
+        "threshold08_t1",
+        "threshold07_t1",
+    ]
+    assert config.policy.generation.val_temperature == 1
+    fixed, *thresholds = diffusion.validation_modes.values()
     assert fixed.selection_policy == "low_confidence"
     assert fixed.block_size == fixed.max_steps == 32
-    assert threshold.temperature == 1
-    assert threshold.selection_policy == "confidence_threshold"
-    assert threshold.threshold == 0.9
-    assert diffusion.sampling.temperature == 1
+    for params in diffusion.validation_modes.values():
+        assert params.temperature == diffusion.sampling.temperature == 1
+        assert params.block_size == params.max_steps == 32
+    assert [params.threshold for params in thresholds] == [0.9, 0.8, 0.7]
+    assert all(
+        params.selection_policy == "confidence_threshold" for params in thresholds
+    )
     config.just_grpo.validation_modes.threshold09_t1.max_steps = 16
     with pytest.raises(ValueError, match="Fixed parallel"):
         validate_config(config)
 
 
 @pytest.mark.parametrize("fail_second", [False, True])
-def test_named_validation_replays_data_and_restores_decoder(
-    monkeypatch, tmp_path, fail_second
+@pytest.mark.parametrize("with_logger", [False, True])
+def test_named_validation_replays_data_restores_decoder_and_plots(
+    monkeypatch, tmp_path, fail_second, with_logger
 ):
     import json
     import sys
@@ -423,53 +427,82 @@ def test_named_validation_replays_data_and_restores_decoder(
     adapter.policy = SimpleNamespace(worker_group=group)
     loader = MagicMock()
     loader.state_dict.return_value = {"position": 0}
-    logger = MagicMock()
+    logger = MagicMock() if with_logger else None
+    modes = ["fixed1_t1", "threshold09_t1", "threshold08_t1", "threshold07_t1"]
+    counts = [[256, 256], [40, 60], [30, 50], [20, 40]]
+    accuracies = [0.4, 0.5, 0.45, 0.35]
     steps = []
 
     def validate(generation, dataloader, *args, **kwargs):
+        index = len(steps)
         steps.append(kwargs["step"])
-        # Both passes must start at the same dataloader position.
         assert dataloader.load_state_dict.call_args.args == ({"position": 0},)
-        if fail_second and len(steps) == 2:
+        if fail_second and index == 1:
             raise RuntimeError("second pass failed")
-        generation.forward_counts.extend([256, 256] if len(steps) == 1 else [40, 60])
-        kwargs["logger"].log_batched_dict_as_jsonl(
-            {}, f"val_data_step{kwargs['step']}.jsonl"
-        )
-        return {"accuracy": 0.4 if len(steps) == 1 else 0.5}, {"total": 2.0}
+        generation.forward_counts.extend(counts[index])
+        if kwargs["logger"] is not None:
+            kwargs["logger"].log_batched_dict_as_jsonl(
+                {}, f"val_data_step{kwargs['step']}.jsonl"
+            )
+        return {"accuracy": accuracies[index]}, {"total": 2.0}
 
     monkeypatch.setitem(
         sys.modules, "nemo_rl.algorithms.grpo", SimpleNamespace(validate=validate)
     )
     master = SimpleNamespace(
-        just_grpo={"validation_modes": {"fixed1_t0": {}, "threshold09_t1": {}}},
+        just_grpo={"validation_modes": dict.fromkeys(modes, {})},
         policy={"generation": {"max_new_tokens": 256}},
         logger={"log_dir": str(tmp_path)},
     )
+    plot = tmp_path / "accuracy_vs_nfe_step10.png"
     if fail_second:
         with pytest.raises(RuntimeError, match="second pass"):
             validate_llada(adapter, loader, None, None, 10, master, logger)
+        assert not plot.exists()
+        if logger is not None:
+            logger.log_plot.assert_not_called()
+            logger.log_table.assert_not_called()
     else:
         metrics, timings = validate_llada(
             adapter, loader, None, None, 10, master, logger
         )
-        assert metrics["accuracy"] == metrics["accuracy/fixed1_t0"] == 0.4
-        assert metrics["accuracy/threshold09_t1"] == 0.5
-        assert metrics["mean_forward_passes/threshold09_t1"] == 50
-        assert metrics["tokens_per_forward/fixed1_t0"] == 1
-        assert metrics["tokens_per_forward/threshold09_t1"] == 256 / 50
-        assert timings == {"total": 4, "total/fixed1_t0": 2, "total/threshold09_t1": 2}
-        saved = json.loads(
-            (tmp_path / "decode_stats_step10_threshold09_t1.json").read_text()
-        )
-        assert saved["forward_passes"] == [40, 60]
-        assert [c.args[1] for c in logger.log_batched_dict_as_jsonl.call_args_list] == [
-            "val_data_step10.jsonl",
-            "val_data_step10_threshold09_t1.jsonl",
-        ]
-    assert steps == [10, 10]
-    assert loader.load_state_dict.call_count == 3
+        assert metrics["accuracy"] == metrics["accuracy/fixed1_t1"] == 0.4
+        assert timings["total"] == 8
+        expected_rows = []
+        for index, name in enumerate(modes):
+            nfe = sum(counts[index]) / len(counts[index])
+            assert metrics[f"accuracy/{name}"] == accuracies[index]
+            assert metrics[f"mean_forward_passes/{name}"] == nfe
+            assert metrics[f"tokens_per_forward/{name}"] == 256 / nfe
+            expected_rows.append([name, nfe, accuracies[index]])
+            suffix = f"_{name}" if index else ""
+            saved = json.loads(
+                (tmp_path / f"decode_stats_step10{suffix}.json").read_text()
+            )
+            assert saved["forward_passes"] == counts[index]
+        assert plot.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        if logger is not None:
+            logger.log_table.assert_called_once_with(
+                ["mode", "nfe", "accuracy"],
+                expected_rows,
+                10,
+                "validation/accuracy_vs_nfe_data",
+            )
+            figure, step, name = logger.log_plot.call_args.args
+            assert (step, name) == (10, "validation/accuracy_vs_nfe")
+            assert [
+                points.get_offsets().tolist()[0]
+                for points in figure.axes[0].collections
+            ] == [row[1:] for row in expected_rows]
+            assert [
+                c.args[1] for c in logger.log_batched_dict_as_jsonl.call_args_list
+            ] == [
+                "val_data_step10.jsonl",
+                *[f"val_data_step10_{mode}.jsonl" for mode in modes[1:]],
+            ]
+    evaluated = 2 if fail_second else 4
+    assert steps == [10] * evaluated
+    assert loader.load_state_dict.call_count == evaluated + 1
     calls = group.run_all_workers_single_data.call_args_list
-    assert [c.kwargs["enabled"] for c in calls] == [True, False, True, False]
-    assert calls[0].kwargs["mode"] == "fixed1_t0"
-    assert calls[2].kwargs["mode"] == "threshold09_t1"
+    assert [c.kwargs["enabled"] for c in calls] == [True, False] * evaluated
+    assert [c.kwargs["mode"] for c in calls[::2]] == modes[:evaluated]

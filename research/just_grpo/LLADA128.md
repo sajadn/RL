@@ -56,10 +56,11 @@ Keep the same training topology when resuming optimizer checkpoints.
 
 ## Validation and offline evaluation
 
-GSM8K validation retains the training canvas length and temperature, selecting
-the most confident sampled token within successive 32-token blocks. It reveals
-one token per forward. Production validation covers all 1319 GSM8K test examples,
-including the final partial batch and batches smaller than the number of workers.
+Both datasets evaluate the same validation questions with four decoders at
+temperature 1: one confidence-ranked token per forward, and confidence thresholds
+0.9, 0.8, and 0.7, all using 32-token blocks. Production GSM8K validation covers all
+1319 test examples, including the final partial batch and batches smaller than the
+number of workers.
 
 Standalone evaluation uses an existing recipe with `run_just_grpo.py --eval-only`
 and checkpoint/sampling overrides; there are no separate evaluation YAMLs.
@@ -68,7 +69,8 @@ path with format `megatron_bridge`, and disable checkpoint saving. For confidenc
 threshold decoding, set `just_grpo.validation_sampling.selection_policy` to
 `confidence_threshold`; the threshold is 0.9. Fixed two-token decoding uses
 `low_confidence` with `just_grpo.validation_sampling.max_steps=16` (block size 32).
-MATH recipes select their decoders through `just_grpo.validation_modes`, below.
+All recipes select their decoders through `just_grpo.validation_modes`, below.
+For a single decoder, clear that mapping before overriding `validation_sampling`.
 
 Decoding statistics include per-example forward counts and aggregate
 tokens/forward. These count the complete canvas, including tokens after EOS.
@@ -99,25 +101,28 @@ References: [LLaDA](https://arxiv.org/abs/2502.09992),
 [JustGRPO](https://arxiv.org/abs/2601.15165).
 
 
-## MATH-500 dual validation
+## Accuracy versus NFE
 
-The MATH canvas-256 recipes evaluate every validation point twice using the same
-Megatron workers and the same validation questions. The ordered
-`just_grpo.validation_modes` mapping selects:
+All eight recipes inherit four ordered `just_grpo.validation_modes`:
 
-- `fixed1_t0`: temperature 0, block 32, one confidence-ranked token per
-  forward pass (256 passes for the full canvas), for the paper comparison.
-- `threshold09_t1`: temperature 1, block 32, confidence threshold 0.9,
-  matching the earlier offline threshold evaluations.
+- `fixed1_t1`: temperature 1, block 32, one confidence-ranked token per forward.
+- `threshold09_t1`: temperature 1, block 32, confidence threshold 0.9.
+- `threshold08_t1`: temperature 1, block 32, confidence threshold 0.8.
+- `threshold07_t1`: temperature 1, block 32, confidence threshold 0.7.
 
-Both modes log `validation/accuracy/<mode>`, `mean_forward_passes/<mode>`,
-and `tokens_per_forward/<mode>`, plus mode-specific validation timings.
-Tokens per forward counts the full 256-token canvas, including positions after EOS.
-The first mode supplies unsuffixed metrics and checkpoint ranking. Its samples
-and decode statistics keep their original filenames; subsequent modes append
-their names to avoid overwriting them. The validation dataloader state and
-training decoder are restored even if a pass fails. With no named modes,
-existing single-mode validation is unchanged.
+Every validation point evaluates all modes on the same questions and logs
+`validation/accuracy/<mode>`, `validation/mean_forward_passes/<mode>`, and
+`validation/tokens_per_forward/<mode>`. The first mode supplies the primary
+accuracy used for best-checkpoint ranking. MATH's former greedy baseline is now
+temperature 1 so the four modes compare unmasking policies at the same temperature.
 
-These two modes differ in temperature as well as reveal policy; compare
-temperature-matched modes when isolating the effect of thresholding.
+The logger emits `validation/accuracy_vs_nfe` after each completed comparison,
+with one labeled point per decoder. W&B also receives the numeric table
+`validation/accuracy_vs_nfe_data`; PNGs are saved as
+`accuracy_vs_nfe_step<step>.png` in the run directory. The x-axis is mean model
+forwards per validation response, including the full canvas after EOS, rather
+than cumulative training compute. Fixed one-token decoding uses 256 forwards.
+
+The first mode keeps the original sample/statistics filenames; subsequent modes
+append their names. The validation dataloader state and training decoder are
+restored even if a pass fails; incomplete comparisons do not emit a plot.

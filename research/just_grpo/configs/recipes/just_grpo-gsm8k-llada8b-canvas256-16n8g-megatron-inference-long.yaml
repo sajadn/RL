@@ -59,6 +59,35 @@ just_grpo:
     returns_reveal_steps: false
     returns_entropy: false
 
+  # First mode supplies the primary accuracy and checkpoint ranking.
+  # Match temperature across all four accuracy/NFE measurements.
+  validation_modes:
+    fixed1_t1: ${just_grpo.validation_sampling}
+    threshold09_t1:
+      temperature: ${just_grpo.validation_sampling.temperature}
+      block_size: ${just_grpo.validation_sampling.block_size}
+      max_steps: ${just_grpo.validation_sampling.max_steps}
+      selection_policy: confidence_threshold
+      threshold: 0.9
+      returns_reveal_steps: false
+      returns_entropy: false
+    threshold08_t1:
+      temperature: ${just_grpo.validation_sampling.temperature}
+      block_size: ${just_grpo.validation_sampling.block_size}
+      max_steps: ${just_grpo.validation_sampling.max_steps}
+      selection_policy: confidence_threshold
+      threshold: 0.8
+      returns_reveal_steps: false
+      returns_entropy: false
+    threshold07_t1:
+      temperature: ${just_grpo.validation_sampling.temperature}
+      block_size: ${just_grpo.validation_sampling.block_size}
+      max_steps: ${just_grpo.validation_sampling.max_steps}
+      selection_policy: confidence_threshold
+      threshold: 0.7
+      returns_reveal_steps: false
+      returns_entropy: false
+
 policy:
   model_name: /lustre/fsw/portfolios/coreai/users/snorouzi/hf_home/hub/models--GSAI-ML--LLaDA-8B-Instruct/snapshots/08b83a6feb34df1a6011b80c3c00c7563e963b07
   tokenizer:
