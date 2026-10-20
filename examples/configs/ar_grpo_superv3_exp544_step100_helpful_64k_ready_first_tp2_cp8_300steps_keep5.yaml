@@ -1,0 +1,5 @@
+# Packed 64K ready-first training; keep the five latest completed checkpoints.
+defaults: ar_grpo_superv3_exp544_step100_helpful_64k_ready_first_tp2_cp8_300steps.yaml
+
+checkpointing:
+  keep_top_k: 5
