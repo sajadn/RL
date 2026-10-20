@@ -50,4 +50,8 @@ exec 9>"$RUNDIR/audit/submit.lock"
 flock -n 9
 if [[ -s "$RUNDIR/audit/jobid" ]]; then cat "$RUNDIR/audit/jobid"; exit 0; fi
 cd "$REPO_DIR"
-sbatch --parsable --account="$ACCOUNT" --partition=batch --time="${TIME:-04:00:00}" --nodes="$NODES" --gpus-per-node=8 --ntasks-per-node=1 --cpus-per-task=128 --job-name="${JOB_NAME:-$RUN_NAME}" --output="$RUNDIR/slurm-%j.out" ray.sub | tee "$RUNDIR/audit/jobid"
+dependency_args=()
+if [[ -n "${DEPENDENCY:-}" ]]; then
+    dependency_args=(--dependency="$DEPENDENCY")
+fi
+sbatch "${dependency_args[@]}" --parsable --account="$ACCOUNT" --partition=batch --time="${TIME:-04:00:00}" --nodes="$NODES" --gpus-per-node=8 --ntasks-per-node=1 --cpus-per-task=128 --job-name="${JOB_NAME:-$RUN_NAME}" --output="$RUNDIR/slurm-%j.out" ray.sub | tee "$RUNDIR/audit/jobid"
